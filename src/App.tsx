@@ -72,11 +72,11 @@ export default function App() {
     <div className="flex h-screen text-slate-800 overflow-hidden" style={{ background: 'var(--app-bg, #f4f6fa)' }}>
       {/* ============ 侧边栏 ============ */}
       <aside
-        className={`relative shrink-0 flex flex-col bg-gradient-to-b from-[#0d1830] via-[#101b33] to-[#0c1526] transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`relative shrink-0 flex flex-col bg-white border-r border-slate-200/80 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           collapsed ? 'w-[72px]' : 'w-[224px]'
         }`}
       >
-        <div className="absolute top-0 left-0 w-full h-52 bg-[radial-gradient(ellipse_at_top_left,rgba(78,131,253,0.16),transparent_65%)] pointer-events-none" />
+        <div className="absolute top-0 left-0 w-full h-52 pointer-events-none" style={{ background: 'radial-gradient(ellipse at top left, rgba(var(--brand-rgb),0.07), transparent 65%)' }} />
 
         {/* 折叠开关（边缘悬浮） */}
         <button
@@ -88,23 +88,23 @@ export default function App() {
         </button>
 
         {/* Logo */}
-        <div className={`relative flex items-center h-16 border-b border-white/[0.07] ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-5'}`}>
+        <div className={`relative flex items-center h-16 border-b border-slate-100 ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-5'}`}>
           <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-lg"
-            style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+            className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 4px 12px rgba(var(--brand-rgb),0.35)' }}
           >
             <ShieldCheck size={17} className="text-white" />
           </div>
           {!collapsed && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-              <div className="text-[14.5px] font-semibold leading-4 text-white">风控BI平台</div>
-              <div className="text-slate-500 text-[10px] tracking-wide mt-0.5">RiskControl BI Suite</div>
+              <div className="text-[14.5px] font-semibold leading-4 text-slate-800">风控BI平台</div>
+              <div className="text-slate-400 text-[10px] tracking-wide mt-0.5">RiskControl BI Suite</div>
             </motion.div>
           )}
         </div>
 
         {!collapsed && (
-          <div className="relative px-4 pt-5 pb-2 text-[10px] text-slate-500 tracking-[0.18em] font-medium whitespace-nowrap">
+          <div className="relative px-4 pt-5 pb-2 text-[10px] text-slate-400 tracking-[0.18em] font-medium whitespace-nowrap">
             监控看板 · MONITOR
           </div>
         )}
@@ -121,15 +121,15 @@ export default function App() {
                 title={collapsed ? n.label : undefined}
                 className={`relative w-full flex items-center rounded-xl transition-colors duration-200 ${
                   collapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'
-                } ${on ? 'text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.05]'}`}
+                } ${on ? 'text-slate-800' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
               >
                 {on && (
                   <motion.div
                     layoutId="nav-pill"
                     className="absolute inset-0 rounded-xl border"
                     style={{
-                      background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.28), rgba(var(--brand-rgb),0.10))',
-                      borderColor: 'rgba(var(--brand-rgb),0.35)',
+                      background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.13), rgba(var(--brand-rgb),0.05))',
+                      borderColor: 'rgba(var(--brand-rgb),0.22)',
                     }}
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
@@ -138,8 +138,8 @@ export default function App() {
                   className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
                   style={
                     on
-                      ? { background: 'rgba(var(--brand-rgb),0.32)', color: 'var(--brand-300)' }
-                      : { background: 'rgba(255,255,255,0.04)' }
+                      ? { background: 'rgba(var(--brand-rgb),0.14)', color: 'var(--brand)' }
+                      : { background: 'rgba(100,116,139,0.07)' }
                   }
                 >
                   <Icon size={15} />
@@ -147,7 +147,7 @@ export default function App() {
                 {!collapsed && (
                   <div className="relative text-left">
                     <div className="text-[13px] font-medium leading-4 whitespace-nowrap">{n.label}</div>
-                    <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand-300)' : 'rgba(148,163,184,0.5)' }}>
+                    <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand)' : 'rgba(148,163,184,0.7)' }}>
                       {n.desc}
                     </div>
                   </div>
@@ -156,7 +156,7 @@ export default function App() {
                   <motion.div
                     layoutId="nav-dot"
                     className="relative ml-auto w-1.5 h-1.5 rounded-full"
-                    style={{ background: 'var(--brand-300)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.9)' }}
+                    style={{ background: 'var(--brand)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.7)' }}
                   />
                 )}
               </button>
@@ -165,18 +165,18 @@ export default function App() {
         </nav>
 
         {/* 底部用户 */}
-        <div className={`relative border-t border-white/[0.07] ${collapsed ? 'p-3 flex justify-center' : 'p-4'}`}>
+        <div className={`relative border-t border-slate-100 ${collapsed ? 'p-3 flex justify-center' : 'p-4'}`}>
           <div className="flex items-center gap-2.5">
             <div className="relative shrink-0">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold">
                 模
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0d1830] animate-pulse" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white animate-pulse" />
             </div>
             {!collapsed && (
               <div>
-                <div className="text-slate-200 text-[12px] whitespace-nowrap">风控模型组</div>
-                <div className="text-slate-500 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
+                <div className="text-slate-700 text-[12px] whitespace-nowrap">风控模型组</div>
+                <div className="text-slate-400 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
               </div>
             )}
           </div>
