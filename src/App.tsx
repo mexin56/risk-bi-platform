@@ -5,6 +5,7 @@ import {
   Bell,
   Gauge,
   Layers,
+  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -52,7 +53,14 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [themeKey, setThemeKey] = useState(getTheme().key);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggedOut, setLoggedOut] = useState(false);
   const active = NAV.find((n) => n.key === page)!;
+
+  const handleLogout = () => {
+    setLogoutOpen(false);
+    setLoggedOut(true);
+  };
 
   useEffect(() => {
     applyTheme(getTheme()); // 确保首屏 CSS 变量就位
@@ -164,21 +172,37 @@ export default function App() {
           })}
         </nav>
 
-        {/* 底部用户 */}
-        <div className={`relative border-t border-slate-100 ${collapsed ? 'p-3 flex justify-center' : 'p-4'}`}>
-          <div className="flex items-center gap-2.5">
+        {/* ============ 左下角用户操作区 ============ */}
+        <div className={`relative border-t border-slate-100 ${collapsed ? 'px-2.5 py-3' : 'p-3.5'}`}>
+          {/* 用户卡片 */}
+          <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5 px-1.5'}`}>
             <div className="relative shrink-0">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold ring-2 ring-emerald-100">
                 模
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white animate-pulse" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white" />
             </div>
             {!collapsed && (
-              <div>
-                <div className="text-slate-700 text-[12px] whitespace-nowrap">风控模型组</div>
+              <div className="min-w-0">
+                <div className="text-slate-700 text-[12.5px] font-medium whitespace-nowrap">风控模型组</div>
                 <div className="text-slate-400 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
               </div>
             )}
+          </div>
+
+          {/* 操作按钮：主题配色 + 退出登录 */}
+          <div className={`mt-2.5 flex ${collapsed ? 'flex-col items-center gap-1.5' : 'gap-1.5'}`}>
+            <ThemeSettings currentKey={themeKey} onChange={handleTheme} collapsed={collapsed} />
+            <button
+              onClick={() => setLogoutOpen(true)}
+              title="退出登录"
+              className={`flex items-center rounded-lg text-slate-500 hover:text-rose-500 hover:bg-rose-50 transition-colors duration-200 ${
+                collapsed ? 'w-9 h-9 justify-center' : 'flex-1 gap-2 px-2.5 py-2'
+              }`}
+            >
+              <LogOut size={15} className="shrink-0" />
+              {!collapsed && <span className="text-[12px] font-medium whitespace-nowrap">退出登录</span>}
+            </button>
           </div>
         </div>
       </aside>
@@ -257,8 +281,88 @@ export default function App() {
         </footer>
       </div>
 
-      {/* 右下角主题配色设置 */}
-      <ThemeSettings currentKey={themeKey} onChange={handleTheme} />
+      {/* ============ 退出登录确认弹窗 ============ */}
+      <AnimatePresence>
+        {logoutOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[90] bg-slate-900/30 backdrop-blur-[2px]"
+              onClick={() => setLogoutOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 12 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[95] w-[320px] bg-white rounded-2xl shadow-[0_24px_64px_-16px_rgba(15,23,42,0.35)] p-6"
+            >
+              <div
+                className="w-11 h-11 rounded-full mx-auto flex items-center justify-center mb-3"
+                style={{ background: 'rgba(var(--brand-rgb),0.10)', color: 'var(--brand)' }}
+              >
+                <LogOut size={18} />
+              </div>
+              <div className="text-center text-[15px] font-semibold text-slate-800">退出登录</div>
+              <div className="text-center text-[12px] text-slate-400 mt-1.5 mb-5">确定要退出当前账号吗？未保存的看板配置将保留在本地。</div>
+              <div className="flex gap-2.5">
+                <button
+                  onClick={() => setLogoutOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-[13px] text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="flex-1 py-2.5 rounded-xl text-[13px] text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+                >
+                  确认退出
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ============ 已退出登录 全屏页 ============ */}
+      <AnimatePresence>
+        {loggedOut && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center"
+            style={{ background: 'var(--app-bg, #f4f6fa)' }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="flex flex-col items-center"
+            >
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 12px 32px rgba(var(--brand-rgb),0.35)' }}
+              >
+                <ShieldCheck size={30} className="text-white" />
+              </div>
+              <div className="text-[20px] font-semibold text-slate-800">已安全退出</div>
+              <div className="text-[13px] text-slate-400 mt-2 mb-8">感谢使用风控BI监控平台</div>
+              <button
+                onClick={() => setLoggedOut(false)}
+                className="px-8 py-3 rounded-xl text-[14px] font-medium text-white transition-all hover:opacity-90 hover:shadow-lg"
+                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+              >
+                重新登录
+              </button>
+              <div className="mt-6 text-[11px] text-slate-300">演示环境 · 无真实账号体系</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
