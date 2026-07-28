@@ -39,20 +39,50 @@ function lastNMonths(n: number): string[] {
 export interface OverviewKpi {
   label: string;
   value: string;
+  raw: number; // 用于 CountUp 动画
+  decimals: number;
   unit?: string;
   mom: number; // 环比 %
   good_when_down?: boolean;
+  spark: number[]; // 近14天迷你趋势
+  icon: string; // 图标 key
+}
+
+function sparkSeries(seed: number, base: number, volatility: number, trend: number): number[] {
+  const rnd = seededRandom(seed);
+  return Array.from({ length: 14 }, (_, i) => +(base + trend * i + (rnd() - 0.5) * volatility).toFixed(2));
 }
 
 export const overviewKpis: OverviewKpi[] = [
-  { label: '当日申请量', value: '48,216', unit: '件', mom: 6.8 },
-  { label: '审批通过率', value: '32.4', unit: '%', mom: -1.2, good_when_down: true },
-  { label: '当日放款金额', value: '6,842', unit: '万元', mom: 4.5 },
-  { label: '在贷余额', value: '86.3', unit: '亿元', mom: 1.8 },
-  { label: '首逾率 (FPD7)', value: '1.06', unit: '%', mom: 0.08, good_when_down: true },
-  { label: 'M1+ 逾期率', value: '3.82', unit: '%', mom: 0.15, good_when_down: true },
-  { label: 'M3+ 不良率', value: '1.64', unit: '%', mom: -0.05, good_when_down: true },
-  { label: '30日复借率', value: '41.7', unit: '%', mom: 2.3 },
+  { label: '当日申请量', value: '48,216', raw: 48216, decimals: 0, unit: '件', mom: 6.8, spark: sparkSeries(11, 40000, 6000, 620), icon: 'inbox' },
+  { label: '审批通过率', value: '32.4', raw: 32.4, decimals: 1, unit: '%', mom: -1.2, good_when_down: true, spark: sparkSeries(12, 33.5, 1.6, -0.08), icon: 'check' },
+  { label: '当日放款金额', value: '6,842', raw: 6842, decimals: 0, unit: '万元', mom: 4.5, spark: sparkSeries(13, 5900, 700, 70), icon: 'coins' },
+  { label: '在贷余额', value: '86.3', raw: 86.3, decimals: 1, unit: '亿元', mom: 1.8, spark: sparkSeries(14, 82.5, 1.2, 0.28), icon: 'vault' },
+  { label: '首逾率 (FPD7)', value: '1.06', raw: 1.06, decimals: 2, unit: '%', mom: 0.08, good_when_down: true, spark: sparkSeries(15, 0.98, 0.12, 0.008), icon: 'alert' },
+  { label: 'M1+ 逾期率', value: '3.82', raw: 3.82, decimals: 2, unit: '%', mom: 0.15, good_when_down: true, spark: sparkSeries(16, 3.6, 0.3, 0.018), icon: 'trend' },
+  { label: 'M3+ 不良率', value: '1.64', raw: 1.64, decimals: 2, unit: '%', mom: -0.05, good_when_down: true, spark: sparkSeries(17, 1.72, 0.14, -0.007), icon: 'shield' },
+  { label: '30日复借率', value: '41.7', raw: 41.7, decimals: 1, unit: '%', mom: 2.3, spark: sparkSeries(18, 38.5, 1.5, 0.24), icon: 'repeat' },
+];
+
+// 综合风险健康度（仪表盘）
+export const riskHealth = {
+  score: 82,
+  level: '健康',
+  dims: [
+    { name: '资产质量', score: 78 },
+    { name: '模型稳定', score: 86 },
+    { name: '增长质量', score: 84 },
+    { name: '流动性', score: 90 },
+  ],
+};
+
+// 告警滚动条
+export const alertTicker = [
+  { level: '预警', text: '小微经营贷 M1+ 4.88% 超阈值 4.5%，连续 5 日' },
+  { level: '关注', text: '信息流渠道 FPD7 升至 1.42%，环比 +0.18pct' },
+  { level: '关注', text: '反欺诈分 v4.0 灰度 PSI 0.121 触及关注线' },
+  { level: '恢复', text: '信用贷-标准 M3+ 回落至 1.38%，低于阈值' },
+  { level: '提示', text: '明日 02:00 跑批窗口，模型回溯任务已排队' },
 ];
 
 export function getLoanTrend(): DailyPoint[] {

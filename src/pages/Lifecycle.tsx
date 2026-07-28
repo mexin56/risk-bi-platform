@@ -1,7 +1,7 @@
 import ReactECharts from 'echarts-for-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { heatStyle, type FeishuColumn } from '@/components/FeishuTable';
-import { baseOption } from '@/lib/chartTheme';
+import { areaGradient, baseOption } from '@/lib/chartTheme';
 import {
   getLifecycleTrend,
   getRetentionCurve,
@@ -79,7 +79,7 @@ export default function Lifecycle() {
         type: 'line',
         smooth: true,
         symbol: 'none',
-        areaStyle: { opacity: 0.1 },
+        areaStyle: { color: areaGradient('#4e83fd', 0.14) },
         data: trend.map((d) => d.新户放款占比),
       },
       {
@@ -87,7 +87,7 @@ export default function Lifecycle() {
         type: 'line',
         smooth: true,
         symbol: 'none',
-        areaStyle: { opacity: 0.1 },
+        areaStyle: { color: areaGradient('#36cfc9', 0.14) },
         data: trend.map((d) => d.复借占比),
       },
       {

@@ -1,7 +1,23 @@
 // ECharts 通用主题（飞书/Metabase 风格浅色系）
+import * as echarts from 'echarts';
 import type { EChartsOption } from 'echarts';
 
 export const PALETTE = ['#4e83fd', '#36cfc9', '#ffb020', '#f76965', '#7f6bf2', '#37c26b', '#ff8f4d'];
+
+// 纵向渐变面积填充
+export function areaGradient(color: string, topOpacity = 0.22) {
+  return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+    { offset: 0, color: hexWithAlpha(color, topOpacity) },
+    { offset: 1, color: hexWithAlpha(color, 0.01) },
+  ]);
+}
+
+function hexWithAlpha(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 export function baseOption(): EChartsOption {
   return {

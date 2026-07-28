@@ -1,29 +1,81 @@
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { motion } from 'framer-motion';
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  BadgeCheck,
+  Coins,
+  Inbox,
+  Repeat2,
+  ShieldAlert,
+  ShieldCheck,
+  Siren,
+  TrendingUp,
+  type LucideIcon,
+} from 'lucide-react';
 import type { OverviewKpi } from '@/data/mockData';
+import CountUp from '@/components/anim/CountUp';
+import Sparkline from '@/components/anim/Sparkline';
+import SpotlightCard from '@/components/anim/SpotlightCard';
 
-export default function KpiCard({ kpi }: { kpi: OverviewKpi }) {
+const ICONS: Record<string, LucideIcon> = {
+  inbox: Inbox,
+  check: BadgeCheck,
+  coins: Coins,
+  vault: ShieldCheck,
+  alert: Siren,
+  trend: TrendingUp,
+  shield: ShieldAlert,
+  repeat: Repeat2,
+};
+
+export default function KpiCard({ kpi, index = 0 }: { kpi: OverviewKpi; index?: number }) {
   const up = kpi.mom >= 0;
   const bad = kpi.good_when_down ? up : !up;
+  const Icon = ICONS[kpi.icon] ?? TrendingUp;
+  const sparkColor = bad ? '#f76965' : '#4e83fd';
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200/80 px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-md transition-shadow">
-      <div className="text-[12px] text-slate-500 mb-1.5">{kpi.label}</div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-[22px] font-semibold text-slate-800 tracking-tight tabular-nums">
-          {kpi.value}
-        </span>
-        {kpi.unit && <span className="text-[12px] text-slate-400">{kpi.unit}</span>}
-      </div>
-      <div className="mt-1.5 flex items-center gap-1 text-[11px]">
-        <span className="text-slate-400">环比</span>
-        <span
-          className={`inline-flex items-center gap-0.5 font-medium tabular-nums ${
-            bad ? 'text-rose-500' : 'text-emerald-600'
-          }`}
-        >
-          {up ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-          {Math.abs(kpi.mom)}%
-        </span>
-      </div>
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.05, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <SpotlightCard className="rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_8px_24px_-8px_rgba(78,131,253,0.25)] hover:border-blue-200/70 hover:-translate-y-0.5 transition-all duration-300">
+        <div className="px-4 pt-3.5 pb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[12px] text-slate-500">{kpi.label}</span>
+            <div
+              className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                bad ? 'bg-rose-50 text-rose-400' : 'bg-blue-50 text-blue-500'
+              }`}
+            >
+              <Icon size={13} strokeWidth={2.2} />
+            </div>
+          </div>
+
+          <div className="flex items-baseline gap-1">
+            <span className="text-[24px] leading-7 font-semibold text-slate-800 tracking-tight">
+              <CountUp value={kpi.raw} decimals={kpi.decimals} delay={index * 60} />
+            </span>
+            {kpi.unit && <span className="text-[11.5px] text-slate-400">{kpi.unit}</span>}
+          </div>
+
+          <div className="mt-2 flex items-end justify-between">
+            <div
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium tabular-nums whitespace-nowrap shrink-0 ${
+                bad
+                  ? 'bg-rose-50 text-rose-500'
+                  : 'bg-emerald-50 text-emerald-600'
+              }`}
+            >
+              {up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+              {Math.abs(kpi.mom)}%
+              <span className="text-slate-400 font-normal ml-0.5">环比</span>
+            </div>
+            <Sparkline data={kpi.spark} color={sparkColor} width={72} height={24} />
+          </div>
+        </div>
+      </SpotlightCard>
+    </motion.div>
   );
 }

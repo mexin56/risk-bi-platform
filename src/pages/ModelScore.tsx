@@ -1,7 +1,7 @@
 import ReactECharts from 'echarts-for-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { heatStyle, StatusTag, type FeishuColumn } from '@/components/FeishuTable';
-import { baseOption } from '@/lib/chartTheme';
+import { areaGradient, baseOption } from '@/lib/chartTheme';
 import {
   gainTable,
   getAucKsTrend,
@@ -28,7 +28,7 @@ export default function ModelScore() {
       smooth: true,
       symbol: 'none',
       lineStyle: { width: 2 },
-      areaStyle: { opacity: 0.06 },
+      areaStyle: { color: areaGradient(k === 'A卡PSI' ? '#4e83fd' : '#36cfc9', 0.1) },
       markLine:
         k === 'A卡PSI'
           ? {
