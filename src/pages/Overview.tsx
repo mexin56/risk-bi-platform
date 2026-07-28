@@ -4,6 +4,7 @@ import KpiCard from '@/components/KpiCard';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { heatStyle, type FeishuColumn } from '@/components/FeishuTable';
 import { areaGradient, baseOption } from '@/lib/chartTheme';
+import { getBrand } from '@/lib/theme';
 import {
   alertTicker,
   channelPie,
@@ -71,7 +72,7 @@ function RiskHealthGauge() {
               x: 0, y: 0, x2: 1, y2: 0,
               colorStops: [
                 { offset: 0, color: '#36cfc9' },
-                { offset: 1, color: '#4e83fd' },
+                { offset: 1, color: getBrand() },
               ],
             },
           },
@@ -156,12 +157,13 @@ export default function Overview() {
           color: {
             type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
-              { offset: 0, color: '#6ea0fe' },
-              { offset: 1, color: '#3b6ef6' },
+              { offset: 0, color: getBrand() },
+              { offset: 1, color: getBrand() },
             ],
           },
+          opacity: 0.9,
         },
-        emphasis: { itemStyle: { color: '#2f5fe0' } },
+        emphasis: { itemStyle: { opacity: 1 } },
         data: loanTrend.map((d) => d.放款金额),
       },
     ],
@@ -184,7 +186,7 @@ export default function Overview() {
   };
 
   const pieOption = {
-    color: ['#4e83fd', '#36cfc9', '#ffb020', '#f76965', '#7f6bf2', '#bcc0c7'],
+    color: [getBrand(), '#36cfc9', '#ffb020', '#f76965', '#7f6bf2', '#bcc0c7'],
     tooltip: { trigger: 'item', formatter: '{b}: {c}% ({d}%)' },
     legend: { orient: 'vertical', right: 4, top: 'middle', icon: 'circle', itemWidth: 8, textStyle: { fontSize: 11, color: '#646a73' } },
     series: [

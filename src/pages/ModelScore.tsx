@@ -2,6 +2,7 @@ import ReactECharts from 'echarts-for-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { heatStyle, StatusTag, type FeishuColumn } from '@/components/FeishuTable';
 import { areaGradient, baseOption } from '@/lib/chartTheme';
+import { getBrand } from '@/lib/theme';
 import {
   gainTable,
   getAucKsTrend,
@@ -28,7 +29,7 @@ export default function ModelScore() {
       smooth: true,
       symbol: 'none',
       lineStyle: { width: 2 },
-      areaStyle: { color: areaGradient(k === 'A卡PSI' ? '#4e83fd' : '#36cfc9', 0.1) },
+      areaStyle: { color: areaGradient(k === 'A卡PSI' ? getBrand() : '#36cfc9', 0.1) },
       markLine:
         k === 'A卡PSI'
           ? {
@@ -60,7 +61,7 @@ export default function ModelScore() {
         name: '当前期占比',
         type: 'bar',
         barMaxWidth: 20,
-        itemStyle: { borderRadius: [3, 3, 0, 0], color: '#4e83fd' },
+        itemStyle: { borderRadius: [3, 3, 0, 0], color: getBrand() },
         data: dist.map((d) => d.当前期占比),
       },
     ],

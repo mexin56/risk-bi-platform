@@ -16,6 +16,7 @@ import type { OverviewKpi } from '@/data/mockData';
 import CountUp from '@/components/anim/CountUp';
 import Sparkline from '@/components/anim/Sparkline';
 import SpotlightCard from '@/components/anim/SpotlightCard';
+import { getBrand } from '@/lib/theme';
 
 const ICONS: Record<string, LucideIcon> = {
   inbox: Inbox,
@@ -32,7 +33,7 @@ export default function KpiCard({ kpi, index = 0 }: { kpi: OverviewKpi; index?: 
   const up = kpi.mom >= 0;
   const bad = kpi.good_when_down ? up : !up;
   const Icon = ICONS[kpi.icon] ?? TrendingUp;
-  const sparkColor = bad ? '#f76965' : '#4e83fd';
+  const sparkColor = bad ? '#f76965' : getBrand();
 
   return (
     <motion.div
@@ -45,9 +46,8 @@ export default function KpiCard({ kpi, index = 0 }: { kpi: OverviewKpi; index?: 
           <div className="flex items-center justify-between mb-2">
             <span className="text-[12px] text-slate-500">{kpi.label}</span>
             <div
-              className={`w-6 h-6 rounded-md flex items-center justify-center ${
-                bad ? 'bg-rose-50 text-rose-400' : 'bg-blue-50 text-blue-500'
-              }`}
+              className={`w-6 h-6 rounded-md flex items-center justify-center ${bad ? 'bg-rose-50 text-rose-400' : ''}`}
+              style={bad ? undefined : { background: 'rgba(var(--brand-rgb),0.10)', color: 'var(--brand)' }}
             >
               <Icon size={13} strokeWidth={2.2} />
             </div>

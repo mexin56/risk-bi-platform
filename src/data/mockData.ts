@@ -351,3 +351,142 @@ export const modelList = [
   { name: '反欺诈分 v4.0', status: '灰度', psi: 0.121, ks: 0.456, auc: 0.783, owner: '反欺诈组' },
   { name: '白名单预筛分 v1.2', status: '在线', psi: 0.037, ks: 0.335, auc: 0.689, owner: '风控模型组' },
 ];
+
+// ==================== 生命周期 · 五环节数据 ====================
+export interface StageKpi {
+  label: string;
+  value: string;
+  unit?: string;
+  mom: number; // 环比 %
+  goodDown?: boolean;
+}
+
+// ---------- 贷前注册环节 ----------
+export const regKpis: StageKpi[] = [
+  { label: '新增注册用户', value: '12,436', unit: '人', mom: 8.2 },
+  { label: '实名认证通过率', value: '87.3', unit: '%', mom: 0.6 },
+  { label: '资料完善率', value: '76.5', unit: '%', mom: 1.8 },
+  { label: '授信申请转化率', value: '68.2', unit: '%', mom: 2.4 },
+];
+
+export const regFunnel: FunnelStage[] = [
+  { stage: '启动/下载APP', value: 58200, conv: null },
+  { stage: '注册完成', value: 42100, conv: 72.3 },
+  { stage: '实名认证通过', value: 36750, conv: 87.3 },
+  { stage: '完善职业/联系人', value: 32240, conv: 87.7 },
+  { stage: '发起授信申请', value: 28600, conv: 88.7 },
+];
+
+export function getRegTrend(): DailyPoint[] {
+  const rnd = seededRandom(301);
+  return lastNDays(30).map((date, i) => ({
+    date,
+    新增注册: Math.round(10500 + rnd() * 3500 + i * 60),
+    实名通过: Math.round(9000 + rnd() * 3000 + i * 52),
+  }));
+}
+
+// ---------- 授信环节 ----------
+export const creditKpis: StageKpi[] = [
+  { label: '授信申请量', value: '28,642', unit: '件', mom: 5.4 },
+  { label: '机审通过率', value: '45.6', unit: '%', mom: -0.8, goodDown: true },
+  { label: '终审通过率', value: '32.4', unit: '%', mom: -1.2, goodDown: true },
+  { label: '平均授信额度', value: '8,650', unit: '元', mom: 2.1 },
+  { label: '平均审批时效', value: '38', unit: '秒', mom: -6.5 },
+];
+
+export const rejectPie = [
+  { name: '综合评分不足', value: 38.2 },
+  { name: '多头共债', value: 24.6 },
+  { name: '信息校验失败', value: 15.8 },
+  { name: '欺诈拦截', value: 12.4 },
+  { name: '其他原因', value: 9.0 },
+];
+
+export const limitDist = [
+  { range: '0-3千', pct: 12.4 },
+  { range: '3-5千', pct: 21.8 },
+  { range: '5-8千', pct: 26.5 },
+  { range: '8千-1.2万', pct: 19.6 },
+  { range: '1.2-2万', pct: 13.2 },
+  { range: '2万+', pct: 6.5 },
+];
+
+export function getCreditPassTrend(): DailyPoint[] {
+  const rnd = seededRandom(302);
+  return lastNDays(30).map((date, i) => ({
+    date,
+    机审通过率: +(45.5 + Math.sin(i / 4) * 2 + rnd() * 1.5).toFixed(1),
+    终审通过率: +(32.4 + Math.sin(i / 5 + 1) * 1.6 + rnd() * 1.2).toFixed(1),
+  }));
+}
+
+// ---------- 交易环节 ----------
+export const loanKpis: StageKpi[] = [
+  { label: '授信支用率', value: '76.0', unit: '%', mom: 1.4 },
+  { label: '放款成功率', value: '94.7', unit: '%', mom: 0.3 },
+  { label: '户均支用金额', value: '6,820', unit: '元', mom: 3.2 },
+  { label: '平均借款期限', value: '9.2', unit: '期', mom: 0.0 },
+];
+
+export const loanFunnel: FunnelStage[] = [
+  { stage: '授信通过客户', value: 15624, conv: null },
+  { stage: '发起支用', value: 11872, conv: 76.0 },
+  { stage: '放款申请', value: 11480, conv: 96.7 },
+  { stage: '放款成功', value: 11246, conv: 98.0 },
+];
+
+export const termDist = [
+  { range: '3期', pct: 8.4 },
+  { range: '6期', pct: 22.6 },
+  { range: '9期', pct: 28.4 },
+  { range: '12期', pct: 31.2 },
+  { range: '18期+', pct: 9.4 },
+];
+
+// ---------- 复贷环节 ----------
+export const relendKpis: StageKpi[] = [
+  { label: '30日复借率', value: '41.7', unit: '%', mom: 2.3 },
+  { label: '复借户均次数', value: '2.8', unit: '次', mom: 1.1 },
+  { label: '结清7日复借率', value: '18.5', unit: '%', mom: -0.6, goodDown: true },
+  { label: '老户余额贡献占比', value: '63.2', unit: '%', mom: 1.6 },
+];
+
+// ---------- 催收环节 ----------
+export const collectKpis: StageKpi[] = [
+  { label: '入催率 (DPD1+)', value: '4.24', unit: '%', mom: 0.12, goodDown: true },
+  { label: 'M0 到期回收率', value: '78.5', unit: '%', mom: -0.4 },
+  { label: 'M1 催回率', value: '42.3', unit: '%', mom: 1.8 },
+  { label: '催收投诉率', value: '0.08', unit: '%', mom: -0.02 },
+];
+
+export interface RollRow {
+  from: string;
+  bal: string; // 入催余额
+  cure: number; // 当月结清 %
+  stay: number; // 维持同阶段 %
+  worse: number; // 恶化至下阶段 %
+}
+
+export const rollTable: RollRow[] = [
+  { from: 'M0 (到期未还)', bal: '3.42亿', cure: 78.5, stay: 15.2, worse: 6.3 },
+  { from: 'M1', bal: '1.86亿', cure: 42.3, stay: 29.1, worse: 28.6 },
+  { from: 'M2', bal: '0.94亿', cure: 24.8, stay: 26.4, worse: 48.8 },
+  { from: 'M3+', bal: '0.62亿', cure: 12.6, stay: 21.3, worse: 66.1 },
+];
+
+export function getCollectTrend(): DailyPoint[] {
+  const rnd = seededRandom(303);
+  return lastNMonths(12).map((date, i) => ({
+    date,
+    入催率: +(4.0 + Math.sin(i / 3) * 0.5 + rnd() * 0.3).toFixed(2),
+    M1催回率: +(41.5 + Math.cos(i / 3) * 3 + rnd() * 2).toFixed(1),
+  }));
+}
+
+export const collectChannels = [
+  { name: 'AI智能外呼', rate: 68.2 },
+  { name: '人工电催', rate: 45.6 },
+  { name: '短信/触达', rate: 18.4 },
+  { name: '委外/法催', rate: 8.2 },
+];

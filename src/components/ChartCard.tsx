@@ -18,7 +18,7 @@ export default function ChartCard({
   children,
   className,
   delay = 0,
-  accent = '#4e83fd',
+  accent = 'var(--brand)',
 }: Props) {
   return (
     <motion.div

@@ -1,8 +1,11 @@
 // ECharts 通用主题（飞书/Metabase 风格浅色系）
 import * as echarts from 'echarts';
 import type { EChartsOption } from 'echarts';
+import { getPalette } from '@/lib/theme';
 
-export const PALETTE = ['#4e83fd', '#36cfc9', '#ffb020', '#f76965', '#7f6bf2', '#37c26b', '#ff8f4d'];
+export function PALETTE() {
+  return getPalette();
+}
 
 // 纵向渐变面积填充
 export function areaGradient(color: string, topOpacity = 0.22) {
@@ -21,7 +24,7 @@ function hexWithAlpha(hex: string, alpha: number): string {
 
 export function baseOption(): EChartsOption {
   return {
-    color: PALETTE,
+    color: getPalette(),
     grid: { left: 12, right: 16, top: 36, bottom: 8, containLabel: true },
     tooltip: {
       trigger: 'axis',
