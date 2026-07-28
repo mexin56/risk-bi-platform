@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
   Bell,
+  ChevronDown,
   Gauge,
   Layers,
   LogOut,
@@ -14,7 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import Overview from '@/pages/Overview';
-import Lifecycle from '@/pages/Lifecycle';
+import Lifecycle, { STAGES, type StageKey } from '@/pages/Lifecycle';
 import Vintage from '@/pages/Vintage';
 import ModelScore from '@/pages/ModelScore';
 import ThemeSettings from '@/components/ThemeSettings';
@@ -55,7 +56,27 @@ export default function App() {
   const [themeKey, setThemeKey] = useState(getTheme().key);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [loggedOut, setLoggedOut] = useState(false);
+  const [stage, setStage] = useState<StageKey>('pre');
+  const [lifeOpen, setLifeOpen] = useState(true);
   const active = NAV.find((n) => n.key === page)!;
+
+  const handleNavClick = (key: PageKey) => {
+    if (key === 'lifecycle') {
+      if (page === 'lifecycle' && !collapsed) {
+        setLifeOpen((v) => !v); // 已在本页：点击父级折叠/展开
+      } else {
+        setPage('lifecycle');
+        setLifeOpen(true);
+      }
+    } else {
+      setPage(key);
+    }
+  };
+
+  const handleStageClick = (s: StageKey) => {
+    setStage(s);
+    setPage('lifecycle');
+  };
 
   const handleLogout = () => {
     setLogoutOpen(false);
@@ -118,56 +139,113 @@ export default function App() {
         )}
         {collapsed && <div className="pt-4" />}
 
-        <nav className={`relative flex-1 space-y-1 ${collapsed ? 'px-2.5' : 'px-3'}`}>
+        <nav className={`relative flex-1 space-y-1 overflow-y-auto custom-scroll ${collapsed ? 'px-2.5' : 'px-3'}`}>
           {NAV.map((n) => {
             const Icon = n.icon;
             const on = page === n.key;
+            const isLife = n.key === 'lifecycle';
             return (
-              <button
-                key={n.key}
-                onClick={() => setPage(n.key)}
-                title={collapsed ? n.label : undefined}
-                className={`relative w-full flex items-center rounded-xl transition-colors duration-200 ${
-                  collapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'
-                } ${on ? 'text-slate-800' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
-              >
-                {on && (
-                  <motion.div
-                    layoutId="nav-pill"
-                    className="absolute inset-0 rounded-xl border"
-                    style={{
-                      background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.13), rgba(var(--brand-rgb),0.05))',
-                      borderColor: 'rgba(var(--brand-rgb),0.22)',
-                    }}
-                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                  />
-                )}
-                <div
-                  className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
-                  style={
-                    on
-                      ? { background: 'rgba(var(--brand-rgb),0.14)', color: 'var(--brand)' }
-                      : { background: 'rgba(100,116,139,0.07)' }
-                  }
+              <div key={n.key}>
+                <button
+                  onClick={() => handleNavClick(n.key)}
+                  title={collapsed ? n.label : undefined}
+                  className={`relative w-full flex items-center rounded-xl transition-colors duration-200 ${
+                    collapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'
+                  } ${on ? 'text-slate-800' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <Icon size={15} />
-                </div>
-                {!collapsed && (
-                  <div className="relative text-left">
-                    <div className="text-[13px] font-medium leading-4 whitespace-nowrap">{n.label}</div>
-                    <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand)' : 'rgba(148,163,184,0.7)' }}>
-                      {n.desc}
-                    </div>
+                  {on && (
+                    <motion.div
+                      layoutId="nav-pill"
+                      className="absolute inset-0 rounded-xl border"
+                      style={{
+                        background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.13), rgba(var(--brand-rgb),0.05))',
+                        borderColor: 'rgba(var(--brand-rgb),0.22)',
+                      }}
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <div
+                    className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+                    style={
+                      on
+                        ? { background: 'rgba(var(--brand-rgb),0.14)', color: 'var(--brand)' }
+                        : { background: 'rgba(100,116,139,0.07)' }
+                    }
+                  >
+                    <Icon size={15} />
                   </div>
+                  {!collapsed && (
+                    <div className="relative text-left">
+                      <div className="text-[13px] font-medium leading-4 whitespace-nowrap">{n.label}</div>
+                      <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand)' : 'rgba(148,163,184,0.7)' }}>
+                        {n.desc}
+                      </div>
+                    </div>
+                  )}
+                  {/* 父级右侧：生命周期为展开箭头，其余为激活光点 */}
+                  {on && !collapsed && !isLife && (
+                    <motion.div
+                      layoutId="nav-dot"
+                      className="relative ml-auto w-1.5 h-1.5 rounded-full"
+                      style={{ background: 'var(--brand)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.7)' }}
+                    />
+                  )}
+                  {isLife && !collapsed && (
+                    <motion.div
+                      animate={{ rotate: lifeOpen ? 180 : 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="relative ml-auto text-slate-400"
+                    >
+                      <ChevronDown size={14} />
+                    </motion.div>
+                  )}
+                </button>
+
+                {/* ============ 二级菜单：生命周期五环节 ============ */}
+                {isLife && !collapsed && (
+                  <AnimatePresence initial={false}>
+                    {lifeOpen && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="ml-[26px] mt-1 mb-1 pl-3 border-l-2 border-slate-100 space-y-0.5">
+                          {STAGES.map((s) => {
+                            const SIcon = s.icon;
+                            const subOn = page === 'lifecycle' && stage === s.key;
+                            return (
+                              <button
+                                key={s.key}
+                                onClick={() => handleStageClick(s.key)}
+                                className={`relative w-full flex items-center gap-2 px-2.5 py-[7px] rounded-lg text-left transition-colors duration-150 ${
+                                  subOn
+                                    ? 'font-medium'
+                                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                                }`}
+                                style={subOn ? { color: 'var(--brand)', background: 'rgba(var(--brand-rgb),0.08)' } : undefined}
+                              >
+                                {subOn && (
+                                  <motion.span
+                                    layoutId="life-sub-marker"
+                                    className="absolute -left-[14px] top-1/2 -translate-y-1/2 w-[3px] h-[16px] rounded-full"
+                                    style={{ background: 'var(--brand)' }}
+                                    transition={{ type: 'spring', stiffness: 480, damping: 36 }}
+                                  />
+                                )}
+                                <SIcon size={13} className="shrink-0" />
+                                <span className="text-[12.5px] whitespace-nowrap">{s.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 )}
-                {on && !collapsed && (
-                  <motion.div
-                    layoutId="nav-dot"
-                    className="relative ml-auto w-1.5 h-1.5 rounded-full"
-                    style={{ background: 'var(--brand)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.7)' }}
-                  />
-                )}
-              </button>
+              </div>
             );
           })}
         </nav>
@@ -268,7 +346,7 @@ export default function App() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
               {page === 'overview' && <Overview />}
-              {page === 'lifecycle' && <Lifecycle />}
+              {page === 'lifecycle' && <Lifecycle stage={stage} />}
               {page === 'vintage' && <Vintage />}
               {page === 'model' && <ModelScore />}
             </motion.div>
