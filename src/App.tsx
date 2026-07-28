@@ -176,10 +176,7 @@ export default function App() {
                   </div>
                   {!collapsed && (
                     <div className="relative text-left">
-                      <div className="text-[13px] font-medium leading-4 whitespace-nowrap">{n.label}</div>
-                      <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand)' : 'rgba(148,163,184,0.7)' }}>
-                        {n.desc}
-                      </div>
+                      <div className="text-[13.5px] font-medium whitespace-nowrap">{n.label}</div>
                     </div>
                   )}
                   {/* 父级右侧：生命周期为展开箭头，其余为激活光点 */}
