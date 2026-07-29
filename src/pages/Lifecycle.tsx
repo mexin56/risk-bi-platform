@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactECharts from 'echarts-for-react';
 import {
@@ -43,15 +42,15 @@ import {
   type StageKpi,
 } from '@/data/mockData';
 
-// ==================== 环节配置 ====================
-type StageKey = 'pre' | 'credit' | 'loan' | 'reloan' | 'collect';
+// ==================== 环节配置（侧边栏二级菜单共用） ====================
+export type StageKey = 'pre' | 'credit' | 'loan' | 'reloan' | 'collect';
 
-const STAGES: { key: StageKey; label: string; icon: LucideIcon; hint: string }[] = [
-  { key: 'pre', label: '贷前注册', icon: UserPlus, hint: '注册→实名→资料→授信申请' },
-  { key: 'credit', label: '授信环节', icon: BadgeCheck, hint: '机审/终审/额度/时效' },
+export const STAGES: { key: StageKey; label: string; icon: LucideIcon; hint: string }[] = [
+  { key: 'pre', label: '贷前注册', icon: UserPlus, hint: '注册→实名→KYC→授信申请' },
+  { key: 'credit', label: '授信环节', icon: BadgeCheck, hint: '机审/终审/额度/定价' },
   { key: 'loan', label: '交易环节', icon: Coins, hint: '支用→放款→期限结构' },
   { key: 'reloan', label: '复贷环节', icon: Repeat2, hint: '留存/复借/客户分层' },
-  { key: 'collect', label: '催收环节', icon: PhoneCall, hint: '入催/滚动率/催回' },
+  { key: 'collect', label: '催收环节', icon: PhoneCall, hint: '入催/滚动率/委外' },
 ];
 
 // ==================== 环节 KPI 小卡 ====================
@@ -65,13 +64,13 @@ function StageKpiCard({ kpi, index }: { kpi: StageKpi; index: number }) {
       transition={{ duration: 0.35, delay: index * 0.05 }}
       className="bg-white rounded-xl border border-slate-200/80 px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-md hover:-translate-y-0.5 transition-all duration-300"
     >
-      <div className="text-[12px] text-slate-500 mb-1.5">{kpi.label}</div>
+      <div className="text-[12px] text-slate-500 mb-1.5 whitespace-nowrap">{kpi.label}</div>
       <div className="flex items-baseline gap-1">
         <span className="text-[22px] font-semibold text-slate-800 tracking-tight tabular-nums">{kpi.value}</span>
         {kpi.unit && <span className="text-[12px] text-slate-400">{kpi.unit}</span>}
       </div>
       <div
-        className={`mt-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium tabular-nums ${
+        className={`mt-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium tabular-nums whitespace-nowrap ${
           kpi.mom === 0 ? 'bg-slate-100 text-slate-500' : bad ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-600'
         }`}
       >
@@ -145,7 +144,7 @@ function StagePre() {
 
   return (
     <div className="space-y-4">
-      <KpiRow items={regKpis} cols="grid-cols-2 xl:grid-cols-4" />
+      <KpiRow items={regKpis} cols="grid-cols-2 md:grid-cols-4 xl:grid-cols-4" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <ChartCard title="注册→授信申请 转化漏斗" subtitle="当日口径 · 人">
           <ReactECharts option={funnelOption(regFunnel)} style={{ height: 300 }} notMerge />
@@ -153,6 +152,13 @@ function StagePre() {
         <ChartCard title="注册与实名趋势" subtitle="近30天 · 人" accent="#36cfc9">
           <ReactECharts option={trendOption} style={{ height: 300 }} notMerge />
         </ChartCard>
+      </div>
+      <div className="bg-gradient-to-r from-teal-50/80 to-emerald-50/60 border border-teal-100 rounded-xl px-5 py-4">
+        <div className="text-[13px] font-semibold text-slate-800 mb-1.5">贷前洞察（海外互金经验）</div>
+        <ul className="text-[12.5px] text-slate-600 leading-6 list-disc pl-4 space-y-0.5">
+          <li>设备信息授权率 88.4% / GPS 授权率 76.1%——授权率每降 5pct，反欺诈规则覆盖率同步下降，建议将授权引导前置到注册第二步；</li>
+          <li>KYC 一次通过率 81.4%，失败件中 62% 为证件照片模糊，建议在拍摄页增加实时清晰度检测，可提升一次通过率约 8pct。</li>
+        </ul>
       </div>
     </div>
   );
@@ -406,6 +412,14 @@ function StageCollect() {
     ],
   };
 
+  const rollCols: FeishuColumn<RollRow>[] = [
+    { key: 'from', title: '逾期阶段', sticky: true, width: 140, render: (r) => <span className="font-medium text-slate-800">{r.from}</span> },
+    { key: 'bal', title: '入催余额', align: 'right' },
+    { key: 'cure', title: '当月结清', align: 'right', render: (r) => `${r.cure}%`, cellStyle: (r) => heatStyle(r.cure, 0, 85, 'green') },
+    { key: 'stay', title: '维持同阶段', align: 'right', render: (r) => `${r.stay}%`, cellStyle: (r) => heatStyle(r.stay, 0, 35, 'blue') },
+    { key: 'worse', title: '恶化至下阶段', align: 'right', render: (r) => `${r.worse}%`, cellStyle: (r) => heatStyle(r.worse, 0, 70, 'red') },
+  ];
+
   const agencyCols: FeishuColumn<AgencyRow>[] = [
     { key: 'name', title: '机构', sticky: true, width: 180, render: (r) => <span className="font-medium text-slate-800">{r.name}</span> },
     { key: 'cases', title: '在委案件', align: 'right' },
@@ -431,17 +445,9 @@ function StageCollect() {
     },
   ];
 
-  const rollCols: FeishuColumn<RollRow>[] = [
-    { key: 'from', title: '逾期阶段', sticky: true, width: 140, render: (r) => <span className="font-medium text-slate-800">{r.from}</span> },
-    { key: 'bal', title: '入催余额', align: 'right' },
-    { key: 'cure', title: '当月结清', align: 'right', render: (r) => `${r.cure}%`, cellStyle: (r) => heatStyle(r.cure, 0, 85, 'green') },
-    { key: 'stay', title: '维持同阶段', align: 'right', render: (r) => `${r.stay}%`, cellStyle: (r) => heatStyle(r.stay, 0, 35, 'blue') },
-    { key: 'worse', title: '恶化至下阶段', align: 'right', render: (r) => `${r.worse}%`, cellStyle: (r) => heatStyle(r.worse, 0, 70, 'red') },
-  ];
-
   return (
     <div className="space-y-4">
-      <KpiRow items={collectKpis} cols="grid-cols-2 xl:grid-cols-4" />
+      <KpiRow items={collectKpis} cols="grid-cols-2 md:grid-cols-4 xl:grid-cols-4" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <ChartCard title="入催率与催回率趋势" subtitle="近12个月 (%)" accent="#f76965">
           <ReactECharts option={trendOption} style={{ height: 260 }} notMerge />
@@ -453,7 +459,6 @@ function StageCollect() {
       <ChartCard title="滚动率矩阵 (Roll Rate)" subtitle="各逾期阶段当月迁移去向 · 绿色=结清 / 蓝色=维持 / 红色=恶化" accent="#f76965">
         <FeishuTable columns={rollCols} data={rollTable} rowKey={(r) => r.from} />
       </ChartCard>
-
       <ChartCard title="委外机构效能对比" subtitle="案件分配与绩效考核口径 · 投诉率超0.2%触发减案" accent="#7f6bf2">
         <FeishuTable columns={agencyCols} data={agencyTable} rowKey={(r) => r.name} />
       </ChartCard>
@@ -461,42 +466,13 @@ function StageCollect() {
   );
 }
 
-// ==================== 页面主体 ====================
-export default function Lifecycle() {
-  const [stage, setStage] = useState<StageKey>('pre');
+// ==================== 页面主体（环节由侧边栏二级菜单控制） ====================
+export default function Lifecycle({ stage }: { stage: StageKey }) {
   const active = STAGES.find((s) => s.key === stage)!;
 
   return (
     <div className="space-y-4 max-w-[1440px] mx-auto">
-      {/* 二级导航条 */}
-      <div className="bg-white rounded-xl border border-slate-200/80 p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex gap-1 overflow-x-auto">
-        {STAGES.map((s) => {
-          const Icon = s.icon;
-          const on = stage === s.key;
-          return (
-            <button
-              key={s.key}
-              onClick={() => setStage(s.key)}
-              className={`relative flex-1 min-w-[130px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition-colors duration-200 ${
-                on ? 'text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              {on && (
-                <motion.span
-                  layoutId="stage-pill"
-                  className="absolute inset-0 rounded-lg shadow-md"
-                  style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                />
-              )}
-              <Icon size={15} className="relative" />
-              <span className="relative text-[13px] font-medium whitespace-nowrap">{s.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 当前环节提示 */}
+      {/* 面包屑 + 当前环节提示 */}
       <AnimatePresence mode="wait">
         <motion.div
           key={stage}
@@ -504,12 +480,14 @@ export default function Lifecycle() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="flex items-center gap-2 text-[12px] text-slate-400 px-1"
+          className="flex items-center gap-2 text-[12px] px-1"
         >
+          <span className="text-slate-400">客户生命周期</span>
+          <span className="text-slate-300">/</span>
           <active.icon size={13} style={{ color: 'var(--brand)' }} />
-          <span className="font-medium text-slate-600">{active.label}</span>
-          <span>·</span>
-          <span>{active.hint}</span>
+          <span className="font-medium text-slate-700">{active.label}</span>
+          <span className="text-slate-300">·</span>
+          <span className="text-slate-400">{active.hint}</span>
         </motion.div>
       </AnimatePresence>
 

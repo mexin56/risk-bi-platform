@@ -3,8 +3,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
   Bell,
+  ChevronDown,
   Gauge,
   Layers,
+  LogOut,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -15,7 +17,7 @@ import {
   Users,
 } from 'lucide-react';
 import Overview from '@/pages/Overview';
-import Lifecycle from '@/pages/Lifecycle';
+import Lifecycle, { STAGES, type StageKey } from '@/pages/Lifecycle';
 import Channel from '@/pages/Channel';
 import Fraud from '@/pages/Fraud';
 import Vintage from '@/pages/Vintage';
@@ -58,6 +60,10 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [themeKey, setThemeKey] = useState(getTheme().key);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggedOut, setLoggedOut] = useState(false);
+  const [stage, setStage] = useState<StageKey>('pre');
+  const [lifeOpen, setLifeOpen] = useState(true);
   const active = NAV.find((n) => n.key === page)!;
 
   useEffect(() => {
@@ -74,15 +80,38 @@ export default function App() {
     setTimeout(() => setRefreshing(false), 900);
   };
 
+  const handleLogout = () => {
+    setLogoutOpen(false);
+    setLoggedOut(true);
+  };
+
+  const handleNavClick = (key: PageKey) => {
+    if (key === 'lifecycle') {
+      if (page === 'lifecycle' && !collapsed) {
+        setLifeOpen((v) => !v); // 已在本页：点击父级折叠/展开
+      } else {
+        setPage('lifecycle');
+        setLifeOpen(true);
+      }
+    } else {
+      setPage(key);
+    }
+  };
+
+  const handleStageClick = (s: StageKey) => {
+    setStage(s);
+    setPage('lifecycle');
+  };
+
   return (
     <div className="flex h-screen text-slate-800 overflow-hidden" style={{ background: 'var(--app-bg, #f4f6fa)' }}>
-      {/* ============ 侧边栏 ============ */}
+      {/* ============ 侧边栏（浅色） ============ */}
       <aside
-        className={`relative shrink-0 flex flex-col bg-gradient-to-b from-[#0d1830] via-[#101b33] to-[#0c1526] transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`relative shrink-0 flex flex-col bg-white border-r border-slate-200/80 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
           collapsed ? 'w-[72px]' : 'w-[224px]'
         }`}
       >
-        <div className="absolute top-0 left-0 w-full h-52 bg-[radial-gradient(ellipse_at_top_left,rgba(78,131,253,0.16),transparent_65%)] pointer-events-none" />
+        <div className="absolute top-0 left-0 w-full h-52 pointer-events-none" style={{ background: 'radial-gradient(ellipse at top left, rgba(var(--brand-rgb),0.07), transparent 65%)' }} />
 
         {/* 折叠开关（边缘悬浮） */}
         <button
@@ -94,97 +123,165 @@ export default function App() {
         </button>
 
         {/* Logo */}
-        <div className={`relative flex items-center h-16 border-b border-white/[0.07] ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-5'}`}>
+        <div className={`relative flex items-center h-16 border-b border-slate-100 ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-5'}`}>
           <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-lg"
-            style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+            className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 4px 12px rgba(var(--brand-rgb),0.35)' }}
           >
             <ShieldCheck size={17} className="text-white" />
           </div>
           {!collapsed && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-              <div className="text-[14.5px] font-semibold leading-4 text-white">风控BI平台</div>
-              <div className="text-slate-500 text-[10px] tracking-wide mt-0.5">RiskControl BI Suite</div>
+              <div className="text-[14.5px] font-semibold leading-4 text-slate-800">风控BI平台</div>
+              <div className="text-slate-400 text-[10px] tracking-wide mt-0.5">RiskControl BI Suite</div>
             </motion.div>
           )}
         </div>
 
         {!collapsed && (
-          <div className="relative px-4 pt-5 pb-2 text-[10px] text-slate-500 tracking-[0.18em] font-medium whitespace-nowrap">
+          <div className="relative px-4 pt-5 pb-2 text-[10px] text-slate-400 tracking-[0.18em] font-medium whitespace-nowrap">
             监控看板 · MONITOR
           </div>
         )}
         {collapsed && <div className="pt-4" />}
 
-        <nav className={`relative flex-1 space-y-1 ${collapsed ? 'px-2.5' : 'px-3'}`}>
+        <nav className={`relative flex-1 space-y-1 overflow-y-auto custom-scroll ${collapsed ? 'px-2.5' : 'px-3'}`}>
           {NAV.map((n) => {
             const Icon = n.icon;
             const on = page === n.key;
+            const isLife = n.key === 'lifecycle';
             return (
-              <button
-                key={n.key}
-                onClick={() => setPage(n.key)}
-                title={collapsed ? n.label : undefined}
-                className={`relative w-full flex items-center rounded-xl transition-colors duration-200 ${
-                  collapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'
-                } ${on ? 'text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-white/[0.05]'}`}
-              >
-                {on && (
-                  <motion.div
-                    layoutId="nav-pill"
-                    className="absolute inset-0 rounded-xl border"
-                    style={{
-                      background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.28), rgba(var(--brand-rgb),0.10))',
-                      borderColor: 'rgba(var(--brand-rgb),0.35)',
-                    }}
-                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                  />
-                )}
-                <div
-                  className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
-                  style={
-                    on
-                      ? { background: 'rgba(var(--brand-rgb),0.32)', color: 'var(--brand-300)' }
-                      : { background: 'rgba(255,255,255,0.04)' }
-                  }
+              <div key={n.key}>
+                <button
+                  onClick={() => handleNavClick(n.key)}
+                  title={collapsed ? n.label : undefined}
+                  className={`relative w-full flex items-center rounded-xl transition-colors duration-200 ${
+                    collapsed ? 'justify-center py-3' : 'gap-3 px-3 py-2.5'
+                  } ${on ? 'text-slate-800' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <Icon size={15} />
-                </div>
-                {!collapsed && (
-                  <div className="relative text-left">
-                    <div className="text-[13px] font-medium leading-4 whitespace-nowrap">{n.label}</div>
-                    <div className="text-[10px] mt-0.5 whitespace-nowrap" style={{ color: on ? 'var(--brand-300)' : 'rgba(148,163,184,0.5)' }}>
-                      {n.desc}
-                    </div>
+                  {on && (
+                    <motion.div
+                      layoutId="nav-pill"
+                      className="absolute inset-0 rounded-xl border"
+                      style={{
+                        background: 'linear-gradient(90deg, rgba(var(--brand-rgb),0.13), rgba(var(--brand-rgb),0.05))',
+                        borderColor: 'rgba(var(--brand-rgb),0.22)',
+                      }}
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <div
+                    className="relative w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+                    style={
+                      on
+                        ? { background: 'rgba(var(--brand-rgb),0.14)', color: 'var(--brand)' }
+                        : { background: 'rgba(100,116,139,0.07)' }
+                    }
+                  >
+                    <Icon size={15} />
                   </div>
+                  {!collapsed && (
+                    <div className="relative text-left">
+                      <div className="text-[13.5px] font-medium whitespace-nowrap">{n.label}</div>
+                    </div>
+                  )}
+                  {/* 父级右侧：生命周期为展开箭头，其余为激活光点 */}
+                  {on && !collapsed && !isLife && (
+                    <motion.div
+                      layoutId="nav-dot"
+                      className="relative ml-auto w-1.5 h-1.5 rounded-full"
+                      style={{ background: 'var(--brand)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.7)' }}
+                    />
+                  )}
+                  {isLife && !collapsed && (
+                    <motion.div
+                      animate={{ rotate: lifeOpen ? 180 : 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="relative ml-auto text-slate-400"
+                    >
+                      <ChevronDown size={14} />
+                    </motion.div>
+                  )}
+                </button>
+
+                {/* ============ 二级菜单：生命周期五环节 ============ */}
+                {isLife && !collapsed && (
+                  <AnimatePresence initial={false}>
+                    {lifeOpen && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="ml-[26px] mt-1 mb-1 pl-3 border-l-2 border-slate-100 space-y-0.5">
+                          {STAGES.map((s) => {
+                            const SIcon = s.icon;
+                            const subOn = page === 'lifecycle' && stage === s.key;
+                            return (
+                              <button
+                                key={s.key}
+                                onClick={() => handleStageClick(s.key)}
+                                className={`relative w-full flex items-center gap-2 px-2.5 py-[7px] rounded-lg text-left transition-colors duration-150 ${
+                                  subOn
+                                    ? 'font-medium'
+                                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                                }`}
+                                style={subOn ? { color: 'var(--brand)', background: 'rgba(var(--brand-rgb),0.08)' } : undefined}
+                              >
+                                {subOn && (
+                                  <motion.span
+                                    layoutId="life-sub-marker"
+                                    className="absolute -left-[14px] top-1/2 -translate-y-1/2 w-[3px] h-[16px] rounded-full"
+                                    style={{ background: 'var(--brand)' }}
+                                    transition={{ type: 'spring', stiffness: 480, damping: 36 }}
+                                  />
+                                )}
+                                <SIcon size={13} className="shrink-0" />
+                                <span className="text-[12.5px] whitespace-nowrap">{s.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 )}
-                {on && !collapsed && (
-                  <motion.div
-                    layoutId="nav-dot"
-                    className="relative ml-auto w-1.5 h-1.5 rounded-full"
-                    style={{ background: 'var(--brand-300)', boxShadow: '0 0 8px rgba(var(--brand-rgb),0.9)' }}
-                  />
-                )}
-              </button>
+              </div>
             );
           })}
         </nav>
 
-        {/* 底部用户 */}
-        <div className={`relative border-t border-white/[0.07] ${collapsed ? 'p-3 flex justify-center' : 'p-4'}`}>
-          <div className="flex items-center gap-2.5">
+        {/* ============ 左下角用户操作区 ============ */}
+        <div className={`relative border-t border-slate-100 ${collapsed ? 'px-2.5 py-3' : 'p-3.5'}`}>
+          <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5 px-1.5'}`}>
             <div className="relative shrink-0">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold ring-2 ring-emerald-100">
                 模
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0d1830] animate-pulse" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white" />
             </div>
             {!collapsed && (
-              <div>
-                <div className="text-slate-200 text-[12px] whitespace-nowrap">风控模型组</div>
-                <div className="text-slate-500 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
+              <div className="min-w-0">
+                <div className="text-slate-700 text-[12.5px] font-medium whitespace-nowrap">风控模型组</div>
+                <div className="text-slate-400 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
               </div>
             )}
+          </div>
+
+          <div className={`mt-2.5 flex ${collapsed ? 'flex-col items-center gap-1.5' : 'gap-1.5'}`}>
+            <ThemeSettings currentKey={themeKey} onChange={handleTheme} collapsed={collapsed} />
+            <button
+              onClick={() => setLogoutOpen(true)}
+              title="退出登录"
+              className={`flex items-center rounded-lg text-slate-500 hover:text-rose-500 hover:bg-rose-50 transition-colors duration-200 ${
+                collapsed ? 'w-9 h-9 justify-center' : 'flex-1 gap-2 px-2.5 py-2'
+              }`}
+            >
+              <LogOut size={15} className="shrink-0" />
+              {!collapsed && <span className="text-[12px] font-medium whitespace-nowrap">退出登录</span>}
+            </button>
           </div>
         </div>
       </aside>
@@ -250,7 +347,7 @@ export default function App() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
               {page === 'overview' && <Overview />}
-              {page === 'lifecycle' && <Lifecycle />}
+              {page === 'lifecycle' && <Lifecycle stage={stage} />}
               {page === 'channel' && <Channel />}
               {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}
@@ -265,8 +362,88 @@ export default function App() {
         </footer>
       </div>
 
-      {/* 右下角主题配色设置 */}
-      <ThemeSettings currentKey={themeKey} onChange={handleTheme} />
+      {/* ============ 退出登录确认弹窗 ============ */}
+      <AnimatePresence>
+        {logoutOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[90] bg-slate-900/30 backdrop-blur-[2px]"
+              onClick={() => setLogoutOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 12 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[95] w-[320px] bg-white rounded-2xl shadow-[0_24px_64px_-16px_rgba(15,23,42,0.35)] p-6"
+            >
+              <div
+                className="w-11 h-11 rounded-full mx-auto flex items-center justify-center mb-3"
+                style={{ background: 'rgba(var(--brand-rgb),0.10)', color: 'var(--brand)' }}
+              >
+                <LogOut size={18} />
+              </div>
+              <div className="text-center text-[15px] font-semibold text-slate-800">退出登录</div>
+              <div className="text-center text-[12px] text-slate-400 mt-1.5 mb-5">确定要退出当前账号吗？未保存的看板配置将保留在本地。</div>
+              <div className="flex gap-2.5">
+                <button
+                  onClick={() => setLogoutOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-[13px] text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="flex-1 py-2.5 rounded-xl text-[13px] text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+                >
+                  确认退出
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ============ 已退出登录 全屏页 ============ */}
+      <AnimatePresence>
+        {loggedOut && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center"
+            style={{ background: 'var(--app-bg, #f4f6fa)' }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="flex flex-col items-center"
+            >
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 12px 32px rgba(var(--brand-rgb),0.35)' }}
+              >
+                <ShieldCheck size={30} className="text-white" />
+              </div>
+              <div className="text-[20px] font-semibold text-slate-800">已安全退出</div>
+              <div className="text-[13px] text-slate-400 mt-2 mb-8">感谢使用风控BI监控平台</div>
+              <button
+                onClick={() => setLoggedOut(false)}
+                className="px-8 py-3 rounded-xl text-[14px] font-medium text-white transition-all hover:opacity-90 hover:shadow-lg"
+                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+              >
+                重新登录
+              </button>
+              <div className="mt-6 text-[11px] text-slate-300">演示环境 · 无真实账号体系</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
