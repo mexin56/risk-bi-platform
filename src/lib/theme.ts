@@ -11,15 +11,10 @@ export interface ThemePreset {
 
 export const THEME_PRESETS: ThemePreset[] = [
   { key: 'blue', name: '经典蓝', brand: '#4e83fd', brand300: '#9db9ff', bg: '#f4f6fa' },
-  { key: 'sky', name: '湖蓝', brand: '#0ea5e9', brand300: '#7dd3fc', bg: '#f2f8fb' },
   { key: 'teal', name: '青碧', brand: '#12b5a5', brand300: '#5eead4', bg: '#f2f8f7' },
-  { key: 'green', name: '松绿', brand: '#22a06b', brand300: '#6ee7b7', bg: '#f3f8f5' },
   { key: 'violet', name: '靛紫', brand: '#7c6cf0', brand300: '#c4b5fd', bg: '#f6f5fb' },
-  { key: 'pink', name: '玫粉', brand: '#ec4899', brand300: '#f9a8d4', bg: '#faf4f8' },
+  { key: 'green', name: '松绿', brand: '#22a06b', brand300: '#6ee7b7', bg: '#f3f8f5' },
   { key: 'orange', name: '熔橙', brand: '#ef7d3c', brand300: '#fdba74', bg: '#faf6f2' },
-  { key: 'amber', name: '琥珀', brand: '#e5a11b', brand300: '#fcd34d', bg: '#faf8f1' },
-  { key: 'red', name: '朱红', brand: '#e05252', brand300: '#fca5a5', bg: '#faf4f4' },
-  { key: 'slate', name: '石墨', brand: '#5b6b8c', brand300: '#a5b4d4', bg: '#f4f6f9' },
 ];
 
 function hexToRgb(hex: string): string {

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactECharts from 'echarts-for-react';
 import {
@@ -40,10 +41,10 @@ import {
   type StageKpi,
 } from '@/data/mockData';
 
-// ==================== 环节配置（侧边栏二级菜单共用） ====================
-export type StageKey = 'pre' | 'credit' | 'loan' | 'reloan' | 'collect';
+// ==================== 环节配置 ====================
+type StageKey = 'pre' | 'credit' | 'loan' | 'reloan' | 'collect';
 
-export const STAGES: { key: StageKey; label: string; icon: LucideIcon; hint: string }[] = [
+const STAGES: { key: StageKey; label: string; icon: LucideIcon; hint: string }[] = [
   { key: 'pre', label: '贷前注册', icon: UserPlus, hint: '注册→实名→资料→授信申请' },
   { key: 'credit', label: '授信环节', icon: BadgeCheck, hint: '机审/终审/额度/时效' },
   { key: 'loan', label: '交易环节', icon: Coins, hint: '支用→放款→期限结构' },
@@ -429,13 +430,42 @@ function StageCollect() {
   );
 }
 
-// ==================== 页面主体（环节由侧边栏二级菜单控制） ====================
-export default function Lifecycle({ stage }: { stage: StageKey }) {
+// ==================== 页面主体 ====================
+export default function Lifecycle() {
+  const [stage, setStage] = useState<StageKey>('pre');
   const active = STAGES.find((s) => s.key === stage)!;
 
   return (
     <div className="space-y-4 max-w-[1440px] mx-auto">
-      {/* 面包屑 + 当前环节提示 */}
+      {/* 二级导航条 */}
+      <div className="bg-white rounded-xl border border-slate-200/80 p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex gap-1 overflow-x-auto">
+        {STAGES.map((s) => {
+          const Icon = s.icon;
+          const on = stage === s.key;
+          return (
+            <button
+              key={s.key}
+              onClick={() => setStage(s.key)}
+              className={`relative flex-1 min-w-[130px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition-colors duration-200 ${
+                on ? 'text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {on && (
+                <motion.span
+                  layoutId="stage-pill"
+                  className="absolute inset-0 rounded-lg shadow-md"
+                  style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                />
+              )}
+              <Icon size={15} className="relative" />
+              <span className="relative text-[13px] font-medium whitespace-nowrap">{s.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 当前环节提示 */}
       <AnimatePresence mode="wait">
         <motion.div
           key={stage}
@@ -443,14 +473,12 @@ export default function Lifecycle({ stage }: { stage: StageKey }) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="flex items-center gap-2 text-[12px] px-1"
+          className="flex items-center gap-2 text-[12px] text-slate-400 px-1"
         >
-          <span className="text-slate-400">客户生命周期</span>
-          <span className="text-slate-300">/</span>
           <active.icon size={13} style={{ color: 'var(--brand)' }} />
-          <span className="font-medium text-slate-700">{active.label}</span>
-          <span className="text-slate-300">·</span>
-          <span className="text-slate-400">{active.hint}</span>
+          <span className="font-medium text-slate-600">{active.label}</span>
+          <span>·</span>
+          <span>{active.hint}</span>
         </motion.div>
       </AnimatePresence>
 
