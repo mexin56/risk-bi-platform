@@ -16,6 +16,7 @@ import FeishuTable, { heatStyle, type FeishuColumn } from '@/components/FeishuTa
 import { areaGradient, baseOption } from '@/lib/chartTheme';
 import { getBrand, getPalette } from '@/lib/theme';
 import {
+  agencyTable,
   collectChannels,
   collectKpis,
   creditKpis,
@@ -35,6 +36,7 @@ import {
   rollTable,
   termDist,
   lifecycleStageTable,
+  type AgencyRow,
   type FunnelStage,
   type LifecycleStageRow,
   type RollRow,
@@ -219,7 +221,7 @@ function StageCredit() {
 
   return (
     <div className="space-y-4">
-      <KpiRow items={creditKpis} cols="grid-cols-2 md:grid-cols-3 xl:grid-cols-5" />
+      <KpiRow items={creditKpis} cols="grid-cols-2 md:grid-cols-4 xl:grid-cols-4" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <ChartCard title="审批通过率趋势" subtitle="近30天 · 机审 / 终审 (%)">
           <ReactECharts option={passOption} style={{ height: 270 }} notMerge />
@@ -404,6 +406,31 @@ function StageCollect() {
     ],
   };
 
+  const agencyCols: FeishuColumn<AgencyRow>[] = [
+    { key: 'name', title: '机构', sticky: true, width: 180, render: (r) => <span className="font-medium text-slate-800">{r.name}</span> },
+    { key: 'cases', title: '在委案件', align: 'right' },
+    { key: 'recovery', title: '回收率', align: 'right', render: (r) => `${r.recovery}%`, cellStyle: (r) => heatStyle(r.recovery, 25, 50, 'green') },
+    { key: 'ptp', title: 'PTP履约率', align: 'right', render: (r) => `${r.ptp}%`, cellStyle: (r) => heatStyle(r.ptp, 55, 78, 'blue') },
+    { key: 'complaint', title: '投诉率', align: 'right', render: (r) => `${r.complaint}%`, cellStyle: (r) => heatStyle(r.complaint, 0, 0.25, 'red') },
+    {
+      key: 'score', title: '综合评分', align: 'right',
+      render: (r) => (
+        <div className="flex items-center justify-end gap-2">
+          <div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${r.score}%`,
+                background: r.score >= 85 ? '#37c26b' : r.score >= 75 ? 'var(--brand)' : '#ffb020',
+              }}
+            />
+          </div>
+          <span className="w-8 text-right font-semibold">{r.score}</span>
+        </div>
+      ),
+    },
+  ];
+
   const rollCols: FeishuColumn<RollRow>[] = [
     { key: 'from', title: '逾期阶段', sticky: true, width: 140, render: (r) => <span className="font-medium text-slate-800">{r.from}</span> },
     { key: 'bal', title: '入催余额', align: 'right' },
@@ -425,6 +452,10 @@ function StageCollect() {
       </div>
       <ChartCard title="滚动率矩阵 (Roll Rate)" subtitle="各逾期阶段当月迁移去向 · 绿色=结清 / 蓝色=维持 / 红色=恶化" accent="#f76965">
         <FeishuTable columns={rollCols} data={rollTable} rowKey={(r) => r.from} />
+      </ChartCard>
+
+      <ChartCard title="委外机构效能对比" subtitle="案件分配与绩效考核口径 · 投诉率超0.2%触发减案" accent="#7f6bf2">
+        <FeishuTable columns={agencyCols} data={agencyTable} rowKey={(r) => r.name} />
       </ChartCard>
     </div>
   );

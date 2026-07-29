@@ -365,6 +365,10 @@ export interface StageKpi {
 export const regKpis: StageKpi[] = [
   { label: '新增注册用户', value: '12,436', unit: '人', mom: 8.2 },
   { label: '实名认证通过率', value: '87.3', unit: '%', mom: 0.6 },
+  { label: '人脸核身通过率', value: '96.2', unit: '%', mom: -0.3 },
+  { label: 'KYC 一次通过率', value: '81.4', unit: '%', mom: 1.2 },
+  { label: '设备信息授权率', value: '88.4', unit: '%', mom: 0.8 },
+  { label: 'GPS 定位授权率', value: '76.1', unit: '%', mom: -1.6, goodDown: true },
   { label: '资料完善率', value: '76.5', unit: '%', mom: 1.8 },
   { label: '授信申请转化率', value: '68.2', unit: '%', mom: 2.4 },
 ];
@@ -392,6 +396,8 @@ export const creditKpis: StageKpi[] = [
   { label: '机审通过率', value: '45.6', unit: '%', mom: -0.8, goodDown: true },
   { label: '终审通过率', value: '32.4', unit: '%', mom: -1.2, goodDown: true },
   { label: '平均授信额度', value: '8,650', unit: '元', mom: 2.1 },
+  { label: '额度使用率', value: '42.8', unit: '%', mom: 1.5 },
+  { label: '平均定价 (APR)', value: '18.6', unit: '%', mom: -0.3 },
   { label: '平均审批时效', value: '38', unit: '秒', mom: -6.5 },
 ];
 
@@ -457,6 +463,9 @@ export const collectKpis: StageKpi[] = [
   { label: '入催率 (DPD1+)', value: '4.24', unit: '%', mom: 0.12, goodDown: true },
   { label: 'M0 到期回收率', value: '78.5', unit: '%', mom: -0.4 },
   { label: 'M1 催回率', value: '42.3', unit: '%', mom: 1.8 },
+  { label: 'PTP 承诺履约率', value: '71.2', unit: '%', mom: 2.4 },
+  { label: '人均在催案件', value: '486', unit: '件', mom: -3.2 },
+  { label: '合规触达率', value: '99.2', unit: '%', mom: 0.1 },
   { label: '催收投诉率', value: '0.08', unit: '%', mom: -0.02 },
 ];
 
@@ -489,4 +498,146 @@ export const collectChannels = [
   { name: '人工电催', rate: 45.6 },
   { name: '短信/触达', rate: 18.4 },
   { name: '委外/法催', rate: 8.2 },
+];
+
+// ==================== 渠道质量监控（助贷/导流） ====================
+export interface ChannelRow {
+  channel: string;
+  type: '自营' | '信息流' | 'API导流' | '应用市场' | '地推';
+  dailyCnt: number; // 日进件
+  passRate: number; // 通过率 %
+  fpd7: number; // 首逾 %
+  m1: number; // M1+ %
+  cac: number; // 件均成本 元
+  roi: number; // ROI %
+}
+
+export const channelQuality: ChannelRow[] = [
+  { channel: 'APP自然流量', type: '自营', dailyCnt: 12480, passRate: 38.5, fpd7: 0.86, m1: 3.12, cac: 12, roi: 286 },
+  { channel: '抖音信息流', type: '信息流', dailyCnt: 9640, passRate: 30.2, fpd7: 1.42, m1: 4.66, cac: 185, roi: 128 },
+  { channel: '快手信息流', type: '信息流', dailyCnt: 5210, passRate: 28.6, fpd7: 1.58, m1: 4.94, cac: 168, roi: 112 },
+  { channel: '腾讯广告', type: '信息流', dailyCnt: 4360, passRate: 31.4, fpd7: 1.26, m1: 4.25, cac: 172, roi: 135 },
+  { channel: 'API-星辰钱包', type: 'API导流', dailyCnt: 6820, passRate: 26.8, fpd7: 1.72, m1: 5.42, cac: 96, roi: 154 },
+  { channel: 'API-云分期', type: 'API导流', dailyCnt: 3980, passRate: 24.5, fpd7: 1.95, m1: 5.88, cac: 88, roi: 141 },
+  { channel: '华为应用市场', type: '应用市场', dailyCnt: 3240, passRate: 35.2, fpd7: 0.94, m1: 3.35, cac: 45, roi: 224 },
+  { channel: 'AppStore', type: '应用市场', dailyCnt: 2180, passRate: 36.8, fpd7: 0.88, m1: 3.05, cac: 52, roi: 238 },
+  { channel: '地推合伙人', type: '地推', dailyCnt: 1306, passRate: 22.4, fpd7: 2.35, m1: 6.72, cac: 210, roi: 86 },
+];
+
+export function getChannelTrend(): DailyPoint[] {
+  const rnd = seededRandom(701);
+  return lastNDays(30).map((date, i) => ({
+    date,
+    自营: Math.round(11500 + rnd() * 2200 + i * 30),
+    信息流: Math.round(18000 + rnd() * 3500 + i * 20),
+    API导流: Math.round(9800 + rnd() * 2400 - i * 15),
+  }));
+}
+
+// ==================== 反欺诈监控 ====================
+export const fraudKpis: StageKpi[] = [
+  { label: '欺诈拦截率', value: '3.8', unit: '%', mom: 0.4, goodDown: true },
+  { label: '当日规则命中', value: '1,286', unit: '件', mom: 12.6, goodDown: true },
+  { label: '人脸核身通过率', value: '96.2', unit: '%', mom: -0.3 },
+  { label: '团伙欺诈预警', value: '12', unit: '起', mom: 3, goodDown: true },
+];
+
+export function getFraudTrend(): DailyPoint[] {
+  const rnd = seededRandom(702);
+  return lastNDays(30).map((date, i) => {
+    const shock = i >= 16 && i <= 20 ? 1.4 : 0; // 中介攻击波次
+    return {
+      date,
+      拦截率: +(3.2 + rnd() * 0.8 + shock).toFixed(2),
+      规则命中: Math.round(950 + rnd() * 400 + shock * 380),
+    };
+  });
+}
+
+export const fraudTypePie = [
+  { name: '身份伪造', value: 32.4 },
+  { name: '设备农场/模拟器', value: 25.8 },
+  { name: '中介包装', value: 21.6 },
+  { name: '团伙欺诈', value: 12.2 },
+  { name: '其他类型', value: 8.0 },
+];
+
+export interface FraudRuleRow {
+  rule: string;
+  type: string;
+  hit: number; // 命中量
+  block: number; // 拦截量
+  precision: number; // 准确率 %
+  status: '生效中' | '观察中' | '已下线';
+}
+
+export const fraudRules: FraudRuleRow[] = [
+  { rule: 'FR-1024 设备聚集(同设备≥5人)', type: '设备指纹', hit: 326, block: 312, precision: 94.2, status: '生效中' },
+  { rule: 'FR-0981 GPS漂移异常', type: '位置核验', hit: 284, block: 268, precision: 91.6, status: '生效中' },
+  { rule: 'FR-0876 人脸比对置信度<阈值', type: '生物核身', hit: 198, block: 186, precision: 88.4, status: '生效中' },
+  { rule: 'FR-1203 中介手机号段聚集', type: '关系图谱', hit: 152, block: 141, precision: 86.8, status: '生效中' },
+  { rule: 'FR-0742 紧急联系人重复(≥3人)', type: '关系图谱', hit: 128, block: 96, precision: 72.5, status: '观察中' },
+  { rule: 'FR-0665 模拟器/改机识别', type: '设备指纹', hit: 96, block: 94, precision: 96.8, status: '生效中' },
+  { rule: 'FR-0558 黑名单证件号匹配', type: '名单核验', hit: 62, block: 62, precision: 100, status: '生效中' },
+  { rule: 'FR-0311 IP代理/机房识别', type: '网络环境', hit: 40, block: 28, precision: 68.2, status: '观察中' },
+];
+
+export interface DeviceAlertRow {
+  fingerprint: string;
+  applyCnt: number; // 关联申请
+  passCnt: number; // 关联通过
+  region: string;
+  level: '高' | '中';
+  action: string;
+}
+
+export const deviceAlerts: DeviceAlertRow[] = [
+  { fingerprint: 'DEV-8f2a91**', applyCnt: 14, passCnt: 3, region: '福建泉州', level: '高', action: '已拦截+设备拉黑' },
+  { fingerprint: 'DEV-3c7bd2**', applyCnt: 11, passCnt: 2, region: '广东东莞', level: '高', action: '已拦截+人脸加验' },
+  { fingerprint: 'DEV-55e1f8**', applyCnt: 9, passCnt: 4, region: '河南周口', level: '中', action: '观察名单' },
+  { fingerprint: 'DEV-a04c66**', applyCnt: 8, passCnt: 1, region: '广西南宁', level: '高', action: '已拦截+团伙溯源' },
+  { fingerprint: 'DEV-72d9b3**', applyCnt: 7, passCnt: 2, region: '湖南衡阳', level: '中', action: '降额处置' },
+];
+
+// ==================== 定价与资金（大盘） ====================
+export const aprDist = [
+  { range: '≤12%', pct: 8.4 },
+  { range: '12-18%', pct: 32.6 },
+  { range: '18-24%', pct: 41.2 },
+  { range: '24-36%', pct: 17.8 },
+];
+
+export function getFundingTrend(): DailyPoint[] {
+  const rnd = seededRandom(703);
+  return lastNMonths(12).map((date, i) => ({
+    date,
+    平均IRR: +(21.5 - i * 0.18 + rnd() * 0.4).toFixed(1),
+    资金成本: +(6.8 - i * 0.08 + rnd() * 0.2).toFixed(1),
+    净息差NIM: +(14.2 - i * 0.06 + rnd() * 0.3).toFixed(1),
+  }));
+}
+
+export const assetFiveClass = [
+  { name: '正常类', pct: 94.2, color: '#37c26b' },
+  { name: '关注类', pct: 2.6, color: '#ffb020' },
+  { name: '次级类', pct: 1.4, color: '#ff8f4d' },
+  { name: '可疑类', pct: 1.1, color: '#f76965' },
+  { name: '损失类', pct: 0.7, color: '#b91c1c' },
+];
+
+// ==================== 催收·委外机构效能 ====================
+export interface AgencyRow {
+  name: string;
+  cases: string; // 在委案件
+  recovery: number; // 回收率 %
+  ptp: number; // PTP履约率 %
+  complaint: number; // 投诉率 %
+  score: number; // 综合评分
+}
+
+export const agencyTable: AgencyRow[] = [
+  { name: '华信催收（自催团队）', cases: '12,400件', recovery: 46.8, ptp: 74.2, complaint: 0.05, score: 92 },
+  { name: '中联律所', cases: '8,600件', recovery: 38.4, ptp: 68.6, complaint: 0.09, score: 85 },
+  { name: '安信联催收', cases: '7,200件', recovery: 35.2, ptp: 65.4, complaint: 0.14, score: 78 },
+  { name: '恒信资产', cases: '5,800件', recovery: 31.6, ptp: 61.8, complaint: 0.22, score: 68 },
 ];

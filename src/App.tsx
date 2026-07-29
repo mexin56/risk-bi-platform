@@ -5,25 +5,31 @@ import {
   Bell,
   Gauge,
   Layers,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
   Search,
+  ShieldAlert,
   ShieldCheck,
   Users,
 } from 'lucide-react';
 import Overview from '@/pages/Overview';
 import Lifecycle from '@/pages/Lifecycle';
+import Channel from '@/pages/Channel';
+import Fraud from '@/pages/Fraud';
 import Vintage from '@/pages/Vintage';
 import ModelScore from '@/pages/ModelScore';
 import ThemeSettings from '@/components/ThemeSettings';
 import { applyTheme, getTheme, type ThemePreset } from '@/lib/theme';
 
-type PageKey = 'overview' | 'lifecycle' | 'vintage' | 'model';
+type PageKey = 'overview' | 'lifecycle' | 'channel' | 'fraud' | 'vintage' | 'model';
 
 const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] = [
   { key: 'overview', label: '大盘数据', icon: Gauge, desc: '经营全景与资产质量' },
   { key: 'lifecycle', label: '客户生命周期', icon: Users, desc: '贷前·授信·交易·复贷·催收' },
+  { key: 'channel', label: '渠道质量', icon: Network, desc: '助贷渠道 · 通过率×风险×成本' },
+  { key: 'fraud', label: '反欺诈监控', icon: ShieldAlert, desc: '规则命中 · 设备聚集 · 团伙预警' },
   { key: 'vintage', label: 'Vintage 监控', icon: Layers, desc: '账龄结构与 Cohort 表现' },
   { key: 'model', label: '模型分监控', icon: Activity, desc: 'PSI / KS / 分布漂移' },
 ];
@@ -245,6 +251,8 @@ export default function App() {
             >
               {page === 'overview' && <Overview />}
               {page === 'lifecycle' && <Lifecycle />}
+              {page === 'channel' && <Channel />}
+              {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}
               {page === 'model' && <ModelScore />}
             </motion.div>

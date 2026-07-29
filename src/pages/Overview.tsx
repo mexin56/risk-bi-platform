@@ -7,7 +7,10 @@ import { areaGradient, baseOption } from '@/lib/chartTheme';
 import { getBrand } from '@/lib/theme';
 import {
   alertTicker,
+  aprDist,
+  assetFiveClass,
   channelPie,
+  getFundingTrend,
   getLoanTrend,
   getOverdueTrend,
   overviewKpis,
@@ -126,6 +129,47 @@ function RiskHealthGauge() {
   );
 }
 
+// 资产五级分类堆叠条
+function FiveClassBar() {
+  return (
+    <ChartCard title="资产五级分类结构" subtitle="在贷余额口径 · 监管五级分类" accent="#37c26b">
+      <div className="px-5 py-6">
+        <div className="flex h-9 rounded-lg overflow-hidden border border-white shadow-sm">
+          {assetFiveClass.map((c) => (
+            <div
+              key={c.name}
+              className="relative flex items-center justify-center transition-all hover:opacity-85"
+              style={{ width: `${c.pct}%`, backgroundColor: c.color, minWidth: c.pct < 1 ? 6 : undefined }}
+              title={`${c.name}: ${c.pct}%`}
+            >
+              {c.pct >= 2 && (
+                <span className="text-[11px] font-semibold text-white tabular-nums">{c.pct}%</span>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="mt-3.5 flex flex-wrap gap-x-5 gap-y-1.5">
+          {assetFiveClass.map((c) => (
+            <span key={c.name} className="inline-flex items-center gap-1.5 text-[11.5px] text-slate-600">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: c.color }} />
+              {c.name}
+              <span className="text-slate-400 tabular-nums">{c.pct}%</span>
+            </span>
+          ))}
+        </div>
+        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11.5px]">
+          <span className="text-slate-400">不良率（次级+可疑+损失）</span>
+          <span className="font-semibold text-rose-500 tabular-nums">3.2%</span>
+        </div>
+        <div className="mt-1.5 flex items-center justify-between text-[11.5px]">
+          <span className="text-slate-400">拨备覆盖率</span>
+          <span className="font-semibold text-slate-700 tabular-nums">218%</span>
+        </div>
+      </div>
+    </ChartCard>
+  );
+}
+
 export default function Overview() {
   const loanTrend = getLoanTrend();
   const overdueTrend = getOverdueTrend();
@@ -206,6 +250,47 @@ export default function Overview() {
     ],
   };
 
+  const aprOption = {
+    ...baseOption(),
+    grid: { left: 12, right: 16, top: 30, bottom: 8, containLabel: true },
+    xAxis: { ...baseOption().xAxis, data: aprDist.map((d) => d.range) },
+    yAxis: { ...baseOption().yAxis, axisLabel: { formatter: '{value}%', color: '#8f959e', fontSize: 11 } },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 34,
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: (p: { dataIndex: number }) => (p.dataIndex === 3 ? '#f76965' : getBrand()),
+        },
+        label: { show: true, position: 'top', fontSize: 10.5, color: '#8f959e', formatter: '{c}%' },
+        markLine: {
+          symbol: 'none',
+          lineStyle: { color: '#f76965', type: 'dashed' },
+          label: { formatter: '24%红线', fontSize: 10, color: '#f76965' },
+          data: [{ xAxis: 2.5 }],
+        },
+        data: aprDist.map((d) => d.pct),
+      },
+    ],
+  };
+
+  const fundingTrend = getFundingTrend();
+  const fundingOption = {
+    ...baseOption(),
+    xAxis: { ...baseOption().xAxis, data: fundingTrend.map((d) => d.date), boundaryGap: false },
+    yAxis: { ...baseOption().yAxis, axisLabel: { formatter: '{value}%', color: '#8f959e', fontSize: 11 } },
+    series: (['平均IRR', '资金成本', '净息差NIM'] as const).map((k, i) => ({
+      name: k,
+      type: 'line',
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 2, type: k === '资金成本' ? 'dashed' : 'solid' },
+      areaStyle: i === 2 ? { color: areaGradient('#36cfc9', 0.1) } : undefined,
+      data: fundingTrend.map((d) => d[k] as number),
+    })),
+  };
+
   const productCols: FeishuColumn<ProductRow>[] = [
     { key: 'product', title: '产品线', sticky: true, width: 130, render: (r) => <span className="font-medium text-slate-800">{r.product}</span> },
     { key: 'balance', title: '在贷余额', align: 'right' },
@@ -243,6 +328,17 @@ export default function Overview() {
           <ReactECharts option={overdueOption} style={{ height: 265 }} notMerge />
         </ChartCard>
         <RiskHealthGauge />
+      </div>
+
+      {/* 定价与资金 */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <ChartCard title="APR 定价分布" subtitle="放款笔数口径 · 红色为超24%利率红线部分" accent="#f76965">
+          <ReactECharts option={aprOption} style={{ height: 235 }} notMerge />
+        </ChartCard>
+        <ChartCard title="收益与资金成本" subtitle="近12个月 · IRR / 资金成本 / 净息差 (%)" accent="#36cfc9">
+          <ReactECharts option={fundingOption} style={{ height: 235 }} notMerge />
+        </ChartCard>
+        <FiveClassBar />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
