@@ -1,0 +1,257 @@
+{
+  "original_dictionary_mapping": {
+    "matched_cnt": 5449,
+    "checked_cnt": 12943,
+    "match_rate": 0.4209997682144789,
+    "customer_mapping": {
+      "HAVE_SINGLE_LOAN": "有单期借款",
+      "HAVE_SINGLE_NOLOAN": "无单期借款",
+      "NO_SINGLE": "无单期"
+    },
+    "use_rate_mapping": {
+      "1": "高额度使用率",
+      "2": "中额度使用率",
+      "3": "低额度使用率"
+    },
+    "score_mapping": {
+      "1": "E",
+      "2": "D",
+      "3": "C",
+      "4": "B",
+      "5": "A"
+    },
+    "loan_count_transform": "same_clamp7"
+  },
+  "top_10_alternative_code_mappings": [
+    {
+      "matched_cnt": 5449,
+      "checked_cnt": 12943,
+      "match_rate": 0.4209997682144789,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "E",
+        "2": "D",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 5415,
+      "checked_cnt": 12943,
+      "match_rate": 0.4183728656416596,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "D",
+        "2": "E",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 4242,
+      "checked_cnt": 12943,
+      "match_rate": 0.32774472687939427,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "A",
+        "2": "D",
+        "3": "C",
+        "4": "B",
+        "5": "E"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 4241,
+      "checked_cnt": 12943,
+      "match_rate": 0.3276674650390172,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "A",
+        "2": "E",
+        "3": "C",
+        "4": "B",
+        "5": "D"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 4189,
+      "checked_cnt": 12943,
+      "match_rate": 0.32364984933941127,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "E",
+        "2": "A",
+        "3": "C",
+        "4": "B",
+        "5": "D"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 4156,
+      "checked_cnt": 12943,
+      "match_rate": 0.32110020860696903,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "D",
+        "2": "A",
+        "3": "C",
+        "4": "B",
+        "5": "E"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 3974,
+      "checked_cnt": 12943,
+      "match_rate": 0.30703855365834815,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "低额度使用率",
+        "3": "中额度使用率"
+      },
+      "score_mapping": {
+        "1": "E",
+        "2": "D",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 3943,
+      "checked_cnt": 12943,
+      "match_rate": 0.30464343660666,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期借款",
+        "NO_SINGLE": "无单期"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "低额度使用率",
+        "3": "中额度使用率"
+      },
+      "score_mapping": {
+        "1": "D",
+        "2": "E",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 3808,
+      "checked_cnt": 12943,
+      "match_rate": 0.29421308815575986,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期",
+        "NO_SINGLE": "无单期借款"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "E",
+        "2": "D",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    },
+    {
+      "matched_cnt": 3798,
+      "checked_cnt": 12943,
+      "match_rate": 0.2934404697519895,
+      "customer_mapping": {
+        "HAVE_SINGLE_LOAN": "有单期借款",
+        "HAVE_SINGLE_NOLOAN": "无单期",
+        "NO_SINGLE": "无单期借款"
+      },
+      "use_rate_mapping": {
+        "1": "高额度使用率",
+        "2": "中额度使用率",
+        "3": "低额度使用率"
+      },
+      "score_mapping": {
+        "1": "D",
+        "2": "E",
+        "3": "C",
+        "4": "B",
+        "5": "A"
+      },
+      "loan_count_transform": "same_clamp7"
+    }
+  ]
+}

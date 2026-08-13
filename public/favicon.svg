@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4e83fd"/>
+      <stop offset="1" stop-color="#8fb1ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#g)"/>
+  <!-- 盾牌:风控 -->
+  <path d="M32 11 L47 16.5 V30 C47 42.5 40.5 48.5 32 52 C23.5 48.5 17 42.5 17 30 V16.5 Z"
+        fill="#ffffff" fill-opacity="0.15" stroke="#ffffff" stroke-width="2.6" stroke-linejoin="round"/>
+  <!-- 上升折线:BI 监控 -->
+  <polyline points="21.5,35.5 27,29.5 32.5,31.5 42.5,21"
+            fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 数据点 -->
+  <circle cx="42.5" cy="21" r="3.4" fill="#ffd666" stroke="#ffffff" stroke-width="1.2"/>
+</svg>

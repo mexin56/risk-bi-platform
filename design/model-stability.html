@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>设计模板 · 模型分稳定性监控</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  /* ============================================================
+     DESIGN SYSTEM · 基于 Stripe DESIGN.md 映射到本项目
+     Stripe token → 本项目 token
+     primary #533afd  → brand #4e83fd  (项目主题蓝)
+     ink #0d253d      → #1e293b        (slate-800 正文)
+     ink-mute #64748d → #64748b        (slate-500 次要)
+     hairline #e3e8ee → #e2e8f0        (slate-200 边框)
+     canvas-soft #f6f9fc → #f4f6fa     (页面背景)
+     semantic: green #22a06b / orange #ef7d3c / red #f76965
+     原则: 数字一律 tabular-nums(tnum)；卡片 12px 圆角 + hairline +
+     Level1 阴影 rgba(15,23,42,0.05)；按钮 pill(9999px)；主色克制使用
+     ============================================================ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f4f6fa;
+    color: #1e293b;
+    -webkit-font-smoothing: antialiased;
+  }
+  .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+  /* ---- 顶部渐变网格 (Stripe gradient mesh → 项目蓝色系) ---- */
+  .hero {
+    position: relative;
+    background:
+      radial-gradient(60% 120% at 8% 0%, rgba(78,131,253,.14) 0%, transparent 60%),
+      radial-gradient(50% 120% at 30% 0%, rgba(157,185,255,.16) 0%, transparent 55%),
+      radial-gradient(45% 110% at 68% 0%, rgba(124,108,240,.10) 0%, transparent 60%),
+      radial-gradient(55% 130% at 92% 0%, rgba(54,207,201,.12) 0%, transparent 58%),
+      linear-gradient(180deg, #ffffff 0%, #f4f6fa 100%);
+    border-bottom: 1px solid #e2e8f0;
+    padding: 28px 32px 22px;
+  }
+  .hero-eyebrow {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 1.2px;
+    color: #4e83fd; text-transform: uppercase;
+  }
+  .hero h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.26px; margin: 6px 0 4px; }
+  .hero .sub { font-size: 13px; color: #64748b; font-weight: 300; }
+
+  /* ---- 布局 ---- */
+  .page { max-width: 1440px; margin: 0 auto; padding: 20px 24px 48px; }
+  .grid { display: grid; gap: 16px; }
+  .kpi-grid { grid-template-columns: repeat(6, 1fr); }
+  .half-grid { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } .half-grid { grid-template-columns: 1fr; } }
+
+  /* ---- 卡片 (Stripe card-feature-light: 白底/12px/1px hairline/Level1) ---- */
+  .card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: rgba(15,23,42,0.05) 0 1px 3px;
+    padding: 20px;
+  }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+  .card-sub { font-size: 11.5px; color: #94a3b8; margin-top: 3px; font-weight: 300; }
+
+  /* ---- KPI ---- */
+  .kpi { padding: 16px 18px; }
+  .kpi-label {
+    font-size: 10.5px; font-weight: 600; letter-spacing: .8px; color: #64748b;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .kpi-dot { width: 6px; height: 6px; border-radius: 999px; }
+  .kpi-value { font-size: 26px; font-weight: 600; letter-spacing: -0.26px; margin: 8px 0 6px; }
+  .kpi-delta { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 999px; }
+
+  /* ---- 按钮 pill (Stripe button-primary-pill: 8px 16px / 9999px) ---- */
+  .btn-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-radius: 9999px; padding: 7px 16px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; transition: all .15s;
+  }
+  .btn-primary { background: #4e83fd; color: #fff; box-shadow: 0 1px 2px rgba(78,131,253,.4); }
+  .btn-primary:hover { background: #3f72f0; }
+  .btn-ghost { background: #fff; color: #4e83fd; border-color: #4e83fd; }
+  .btn-ghost:hover { background: #f0f4ff; }
+  .btn-pill-sm { padding: 4px 12px; font-size: 12px; }
+
+  /* ---- 分段控件 ---- */
+  .seg { display: inline-flex; background: #eef1f6; border-radius: 9999px; padding: 3px; gap: 2px; }
+  .seg button {
+    border: none; background: transparent; border-radius: 9999px;
+    padding: 4px 14px; font-size: 12px; color: #64748b; cursor: pointer; font-family: inherit;
+  }
+  .seg button.on { background: #fff; color: #1e293b; font-weight: 600; box-shadow: rgba(15,23,42,.08) 0 1px 2px; }
+
+  /* ---- 状态 badge (Stripe pill-tag-soft) ---- */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; letter-spacing: .2px;
+    padding: 3px 10px; border-radius: 9999px; white-space: nowrap;
+  }
+  .badge-ok    { background: #e7f6ee; color: #15803d; }
+  .badge-warn  { background: #fdf1e4; color: #c2600f; }
+  .badge-crit  { background: #fdeaea; color: #dc2626; }
+  .badge-info  { background: #e9efff; color: #4e83fd; }
+  .dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
+
+  /* ---- 表格 ---- */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th {
+    text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .6px;
+    color: #94a3b8; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; white-space: nowrap;
+  }
+  td { padding: 9px 10px; border-bottom: 1px solid #f1f5f9; color: #334155; }
+  tr:hover td { background: #f8fafc; }
+  td.num, th.num { text-align: right; }
+  .strong { color: #1e293b; font-weight: 600; }
+
+  /* ---- 迁移矩阵热力格 ---- */
+  .matrix td, .matrix th { text-align: center; }
+  .matrix td { font-size: 11.5px; }
+  .mcell { display: block; border-radius: 6px; padding: 6px 2px; transition: transform .12s; }
+  .mcell:hover { transform: scale(1.06); }
+  .mcell.diag { outline: 1.5px solid rgba(78,131,253,.55); outline-offset: -1px; }
+
+  /* ---- 告警条 ---- */
+  .alert-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 4px; border-bottom: 1px solid #f1f5f9; font-size: 12.5px;
+  }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-icon {
+    width: 30px; height: 30px; border-radius: 999px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+
+  /* ---- 健康分环形 ---- */
+  .ring-wrap { display: flex; align-items: center; gap: 18px; }
+  .ring-num { font-size: 30px; font-weight: 600; letter-spacing: -0.4px; }
+
+  /* ---- 工具条 ---- */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #64748b; }
+  .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .hint { font-size: 10.5px; color: #c0c8d4; }
+  .chart { width: 100%; }
+</style>
+</head>
+<body>
+
+<!-- ================= 顶部渐变网格区 ================= -->
+<div class="hero">
+  <div class="hero-eyebrow">Model Stability · 模型健康</div>
+  <h1>模型分稳定性监控</h1>
+  <div class="sub">监控评分模型分数分布漂移 · 实时捕捉 PSI / 迁移 / 排序能力劣化信号,支持对比基准期(上线日)与当前期(最近 30 天)</div>
+</div>
+
+<div class="page">
+
+  <!-- 工具条: 模型切换 + 时间范围 + 操作 -->
+  <div class="toolbar">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div class="seg">
+        <button class="on">A卡 · 贷前信用分</button>
+        <button>B卡 · 贷中行为分</button>
+        <button>C卡 · 反欺诈分</button>
+        <button>D卡 · 定价分</button>
+      </div>
+      <div class="seg">
+        <button>近7日</button>
+        <button class="on">近30日</button>
+        <button>近90日</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-pill btn-ghost btn-pill-sm">⤓ 导出报告</button>
+      <button class="btn-pill btn-primary btn-pill-sm">＋ 配置告警</button>
+    </div>
+  </div>
+
+  <!-- ================= KPI 行 ================= -->
+  <div class="grid kpi-grid">
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#4e83fd"></span>当前 PSI</div>
+      <div class="kpi-value tnum" style="color:#dc2626">0.182</div>
+      <span class="kpi-delta" style="background:#fdeaea;color:#dc2626">▲ 0.047 较上周</span>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#ef7d3c"></span>7日 PSI 峰值</div>
+      <div class="kpi-value tnum" style="color:#c2600f">0.213</div>
+      <span class="kpi-delta" style="background:#fdf1e4;color:#c2600f">7月28日 触发预警</span>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#22a06b"></span>样本量(当前期)</div>
+      <div class="kpi-value tnum">128,640</div>
+      <span class="kpi-delta" style="background:#e7f6ee;color:#15803d">▼ 3.2% 较基准期</span>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#4e83fd"></span>通过率 Δ</div>
+      <div class="kpi-value tnum" style="color:#dc2626">+2.14pp</div>
+      <span class="kpi-delta" style="background:#fdeaea;color:#dc2626">▲ 阈值 ±1.5pp</span>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#4e83fd"></span>坏账率 Δ</div>
+      <div class="kpi-value tnum" style="color:#15803d">-0.38pp</div>
+      <span class="kpi-delta" style="background:#e7f6ee;color:#15803d">▼ 优于基准</span>
+    </div>
+    <div class="card kpi">
+      <div class="kpi-label"><span class="kpi-dot" style="background:#22a06b"></span>模型健康分</div>
+      <div class="kpi-value tnum" style="color:#c2600f">72</div>
+      <span class="kpi-delta" style="background:#fdf1e4;color:#c2600f">状态: 关注</span>
+    </div>
+  </div>
+
+  <!-- ================= PSI 趋势 + 分数分布 ================= -->
+  <div class="grid half-grid" style="margin-top:16px">
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">PSI 日度趋势</div>
+          <div class="card-sub">橙色虚线 = 关注阈值 0.10 · 红色虚线 = 预警阈值 0.25</div>
+        </div>
+        <div class="legend">
+          <span><i style="background:#4e83fd"></i>A卡 PSI</span>
+          <span><i style="background:#36cfc9"></i>B卡 PSI</span>
+        </div>
+      </div>
+      <div id="psiChart" class="chart" style="height:280px"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">分数分布对比</div>
+          <div class="card-sub">基准期(上线日) vs 当前期(近30天)· 漂移主要集中在 640-700 低分段</div>
+        </div>
+        <span class="badge badge-info"><span class="dot"></span>PSI 贡献 Top3 已标注</span>
+      </div>
+      <div id="distChart" class="chart" style="height:280px"></div>
+    </div>
+  </div>
+
+  <!-- ================= 迁移矩阵 + 告警 ================= -->
+  <div class="grid half-grid" style="margin-top:16px">
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">分箱迁移矩阵</div>
+          <div class="card-sub">基准期分箱 → 当前期分箱 · 对角高亮为稳定客户 · 浅蓝格 = 向上迁移(风险上升)</div>
+        </div>
+        <span class="hint">单位: % · 每行和为 100%</span>
+      </div>
+      <table class="matrix" id="matrixTable"></table>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">稳定性告警</div>
+          <div class="card-sub">近 30 天触发 · 按严重程度排序</div>
+        </div>
+        <button class="btn-pill btn-ghost btn-pill-sm">查看全部 12 条</button>
+      </div>
+      <div id="alertList"></div>
+    </div>
+  </div>
+
+  <!-- ================= 健康排行 + 漂移归因 ================= -->
+  <div class="grid half-grid" style="margin-top:16px">
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">模型健康排行</div>
+          <div class="card-sub">综合 PSI / 迁移率 / 排序能力 / 通过率 四维加权</div>
+        </div>
+        <div class="legend">
+          <span><i style="background:#22a06b"></i>健康</span>
+          <span><i style="background:#ef7d3c"></i>关注</span>
+          <span><i style="background:#f76965"></i>预警</span>
+        </div>
+      </div>
+      <div id="rankChart" class="chart" style="height:250px"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">漂移归因分析</div>
+          <div class="card-sub">PSI 贡献度分解 · 定位漂移来源(建议结合特征监控联动)</div>
+        </div>
+        <span class="badge badge-warn"><span class="dot"></span>2 个特征贡献 > 30%</span>
+      </div>
+      <div id="attrChart" class="chart" style="height:250px"></div>
+    </div>
+  </div>
+
+  <!-- 设计说明脚注 -->
+  <div style="margin-top:24px;padding:14px 18px;border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;font-size:12px;color:#64748b;line-height:1.9">
+    <b style="color:#334155">设计系统说明 · 基于 Stripe DESIGN.md 映射</b><br>
+    ① 色彩: 主色 #4e83fd(项目品牌蓝,替代 Stripe indigo #533afd), 语义色 green/orange/red 仅用于状态;<br>
+    ② 排版: 标题 26px/600/-0.26px(中文不做 300 细字重), 标签 10.5px/600/+0.8px 大写间距, 数字一律 tabular-nums;<br>
+    ③ 卡片: 白底 + 1px #e2e8f0 hairline + 12px 圆角 + Level1 阴影; 页面背景 #f4f6fa;<br>
+    ④ 控件: 按钮/分段器/badge 均为 pill(9999px), 主色克制使用;<br>
+    ⑤ 顶部渐变 mesh 由品牌蓝 + 淡紫 + 青色 radial 叠加, 呼应 Stripe gradient mesh 结构。
+  </div>
+</div>
+
+<script>
+/* ================= 模拟数据 ================= */
+const brand = '#4e83fd';
+const days = Array.from({length:30}, (_,i) => `7/${i+1}`);
+const psiA = [0.062,0.071,0.058,0.066,0.083,0.079,0.091,0.102,0.095,0.088,0.106,0.118,0.104,0.112,0.126,0.121,0.134,0.148,0.139,0.151,0.162,0.155,0.168,0.175,0.169,0.181,0.188,0.177,0.186,0.182];
+const psiB = [0.041,0.045,0.038,0.052,0.049,0.055,0.048,0.061,0.058,0.063,0.057,0.071,0.066,0.074,0.069,0.078,0.072,0.081,0.076,0.084,0.079,0.086,0.082,0.089,0.085,0.091,0.088,0.093,0.09,0.087];
+
+const bins = ['≤400','401-480','481-560','561-640','641-720','721-800','≥801'];
+const basePct  = [2.4, 6.8, 12.5, 18.2, 24.6, 22.1, 13.4];
+const curPct   = [1.9, 5.6, 10.8, 15.7, 27.9, 24.8, 13.3];
+const psiContrib = [0.003, 0.014, 0.028, 0.062, 0.106, 0.072, 0.001];
+
+/* 迁移矩阵: 7x7, 行=基准分箱, 列=当前分箱, 单位% */
+const migration = [
+  [72.1, 18.4,  5.2,  2.1,  1.1,  0.7,  0.4],
+  [11.2, 65.8, 14.6,  4.8,  2.0,  1.0,  0.6],
+  [ 3.4, 12.7, 61.9, 13.8,  5.2,  2.1,  0.9],
+  [ 1.8,  4.6, 12.2, 58.4, 15.3,  5.6,  2.1],
+  [ 1.1,  2.3,  5.1, 13.6, 56.8, 15.2,  5.9],
+  [ 0.6,  1.2,  2.4,  5.8, 14.7, 60.2, 15.1],
+  [ 0.5,  0.8,  1.6,  2.9,  6.2, 16.4, 71.6],
+];
+
+/* ================= 图表 ================= */
+function mk(id, opt) { const c = echarts.init(document.getElementById(id)); c.setOption(opt); window.addEventListener('resize', ()=>c.resize()); }
+
+const axisBase = {
+  axisLine: { lineStyle: { color: '#e2e8f0' } },
+  axisTick: { show: false },
+  axisLabel: { color: '#94a3b8', fontSize: 11 },
+  splitLine: { lineStyle: { color: '#f1f5f9' } },
+};
+
+/* PSI 趋势 */
+mk('psiChart', {
+  grid: { left: 44, right: 16, top: 28, bottom: 28 },
+  tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: '#e2e8f0', textStyle: { color: '#334155', fontSize: 12 } },
+  xAxis: { ...axisBase, type: 'category', data: days },
+  yAxis: { ...axisBase, type: 'value', axisLabel: { ...axisBase.axisLabel, formatter: v => v.toFixed(2) } },
+  series: [
+    { name:'A卡 PSI', type:'line', smooth:true, symbol:'none', data: psiA,
+      lineStyle:{ width:2, color:brand }, areaStyle:{ color: { type:'linear', x:0,y:0,x2:0,y2:1, colorStops:[{offset:0,color:'rgba(78,131,253,.14)'},{offset:1,color:'rgba(78,131,253,0)'}] } },
+      markLine: { symbol:'none', data:[
+        { yAxis:0.10, lineStyle:{ color:'#ef7d3c', type:'dashed' }, label:{ formatter:'关注 0.10', fontSize:10, color:'#c2600f', position:'insideEndTop' } },
+        { yAxis:0.25, lineStyle:{ color:'#f76965', type:'dashed' }, label:{ formatter:'预警 0.25', fontSize:10, color:'#dc2626', position:'insideEndTop' } },
+      ] } },
+    { name:'B卡 PSI', type:'line', smooth:true, symbol:'none', data: psiB, lineStyle:{ width:2, color:'#36cfc9' } },
+  ],
+  legend: { show: false },
+});
+
+/* 分数分布对比 */
+mk('distChart', {
+  grid: { left: 44, right: 16, top: 24, bottom: 28 },
+  tooltip: { trigger: 'axis', backgroundColor:'#fff', borderColor:'#e2e8f0', textStyle:{ color:'#334155', fontSize:12 }, axisPointer:{ type:'shadow' } },
+  xAxis: { ...axisBase, type:'category', data: bins },
+  yAxis: { ...axisBase, type:'value', axisLabel:{ ...axisBase.axisLabel, formatter:'{value}%' } },
+  series: [
+    { name:'基准期', type:'bar', data: basePct, barMaxWidth:22, itemStyle:{ color:'#cbd5e1', borderRadius:[3,3,0,0] }, label:{ show:true, position:'top', fontSize:10, color:'#94a3b8', formatter: p => (Math.abs(p.value - curPct[p.dataIndex]) >= 3 ? '▼' : '') } },
+    { name:'当前期', type:'bar', data: curPct, barMaxWidth:22, itemStyle:{ color:brand, borderRadius:[3,3,0,0] } },
+  ],
+  legend: { show:false },
+});
+
+/* 健康排行 */
+const ranks = [
+  { name:'C卡 · 反欺诈分', score: 94, color:'#22a06b' },
+  { name:'D卡 · 定价分',   score: 88, color:'#22a06b' },
+  { name:'B卡 · 贷中行为分',score: 81, color:'#22a06b' },
+  { name:'A卡 · 贷前信用分',score: 72, color:'#ef7d3c' },
+  { name:'E卡 · 老客提额分',score: 63, color:'#f76965' },
+];
+mk('rankChart', {
+  grid: { left: 10, right: 46, top: 8, bottom: 24 },
+  xAxis: { ...axisBase, type:'value', max:100, splitLine:{ show:false }, axisLabel:{ show:false } },
+  yAxis: { ...axisBase, type:'category', inverse:true, data: ranks.map(r=>r.name), axisLabel:{ color:'#475569', fontSize:12 } },
+  series: [{
+    type:'bar', data: ranks.map(r => ({ value:r.score, itemStyle:{ color:r.color, borderRadius:[0,4,4,0] } })),
+    barWidth:14, label:{ show:true, position:'right', formatter:'{c} 分', fontSize:12, color:'#334155', fontWeight:600 },
+    backgroundStyle: { color:'#f1f5f9', borderRadius:[0,4,4,0] }, showBackground: true,
+  }],
+  tooltip: { show:false },
+});
+
+/* 漂移归因(水平条) */
+const attrs = [
+  { name:'特征_收入区间',    pct: 41, note:'客群下沉, 中低收入占比↑' },
+  { name:'特征_职业类型',    pct: 23, note:'自由职业占比↑' },
+  { name:'特征_申请渠道',    pct: 14, note:'新渠道投放放量' },
+  { name:'特征_负债收入比',  pct: 9,  note:'—' },
+  { name:'其他特征',        pct: 13, note:'—' },
+];
+mk('attrChart', {
+  grid: { left: 10, right: 30, top: 8, bottom: 24 },
+  xAxis: { ...axisBase, type:'value', max: 50, splitLine:{ show:false }, axisLabel:{ show:false } },
+  yAxis: { ...axisBase, type:'category', inverse:true, data: attrs.map(a=>a.name), axisLabel:{ color:'#475569', fontSize:12 } },
+  series: [{
+    type:'bar', data: attrs.map((a,i) => ({
+      value: a.pct,
+      itemStyle: { color: i === 0 ? '#ef7d3c' : (i === 1 ? '#f7c948' : brand), borderRadius:[0,4,4,0], opacity: i===0?1:0.85 },
+    })),
+    barWidth:14, label:{ show:true, position:'right', formatter:'{c}%', fontSize:12, color:'#334155', fontWeight:600 },
+    backgroundStyle: { color:'#f1f5f9', borderRadius:[0,4,4,0] }, showBackground:true,
+  }],
+  tooltip: { show:false },
+});
+
+/* ================= 迁移矩阵 ================= */
+(function(){
+  const h = ['基准 \\ 当前','≤400','401-480','481-560','561-640','641-720','721-800','≥801'];
+  let html = '<tr>' + h.map((c,i)=>`<th>${c}</th>`).join('') + '</tr>';
+  migration.forEach((row,i)=>{
+    html += `<tr><th style="color:#64748b">${bins[i]}</th>`;
+    row.forEach((v,j)=>{
+      const cell = v >= 55 ? 'rgba(78,131,253,.30)' : v >= 12 ? 'rgba(78,131,253,.16)' : 'rgba(148,163,184,.09)';
+      const tc = v >= 55 ? '#1d4ed8' : '#475569';
+      html += `<td><span class="mcell ${i===j?'diag':''}" style="background:${cell};color:${tc};font-weight:${v>=55?600:400}">${v}%</span></td>`;
+    });
+    html += '</tr>';
+  });
+  document.getElementById('matrixTable').innerHTML = html;
+})();
+
+/* ================= 告警列表 ================= */
+(function(){
+  const alerts = [
+    { level:'crit', icon:'⚠', iconBg:'#fdeaea', title:'A卡 · 贷前信用分', detail:'PSI 0.182 连续 5 日 > 0.10 关注线, 7/28 触及 0.213', time:'今天 09:42', badge:['badge-crit','严重'] },
+    { level:'warn', icon:'▲', iconBg:'#fdf1e4', title:'A卡 · 贷前信用分', detail:'通过率 +2.14pp 超出 ±1.5pp 阈值, 低分段占比抬升 3.3pp', time:'今天 08:15', badge:['badge-warn','偏高'] },
+    { level:'warn', icon:'▲', iconBg:'#fdf1e4', title:'A卡 · 贷前信用分', detail:'641-720 分箱迁移率 15.3% > 历史均值 9.8%', time:'昨天 22:30', badge:['badge-warn','偏高'] },
+    { level:'info', icon:'▣', iconBg:'#e9efff', title:'B卡 · 贷中行为分', detail:'PSI 0.087 连续 3 日上行, 距关注线 0.013, 建议持续观察', time:'昨天 18:05', badge:['badge-info','观察'] },
+    { level:'ok',  icon:'✓', iconBg:'#e7f6ee', title:'D卡 · 定价分', detail:'PSI 回落至 0.042, 告警自动解除', time:'7/29 10:12', badge:['badge-ok','已恢复'] },
+  ];
+  document.getElementById('alertList').innerHTML = alerts.map(a=>`
+    <div class="alert-row">
+      <div class="alert-icon" style="background:${a.iconBg}">${a.icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="strong">${a.title}</span>
+          <span class="badge ${a.badge[0]}"><span class="dot"></span>${a.badge[1]}</span>
+        </div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.detail}</div>
+      </div>
+      <span class="hint" style="white-space:nowrap">${a.time}</span>
+    </div>
+  `).join('');
+})();
+</script>
+</body>
+</html>

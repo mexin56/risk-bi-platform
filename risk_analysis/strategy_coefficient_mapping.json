@@ -1,0 +1,334 @@
+{
+  "coefficient_row_count": 315,
+  "coefficient_duplicate_keys": [],
+  "plan_row_count": 315,
+  "joined_count": 315,
+  "mapping_relation": {
+    "other": 111,
+    "equals_raw_cap": 87,
+    "equals_plan_b": 117
+  },
+  "eligible_combination_count": {
+    "True": 189,
+    "False": 126
+  },
+  "deployed_to_raw_cap_scale_for_eligible": {
+    "min": 0.5,
+    "max": 5.0,
+    "mean": 1.2894179894179894,
+    "distribution": {
+      "1.25": 9,
+      "2.0": 14,
+      "0.6": 5,
+      "0.5": 4,
+      "1.0": 84,
+      "0.625": 4,
+      "1.333333": 13,
+      "1.5": 23,
+      "1.2": 4,
+      "0.8": 4,
+      "2.5": 4,
+      "0.533333": 1,
+      "0.666667": 2,
+      "0.75": 2,
+      "1.666667": 5,
+      "0.875": 1,
+      "0.833333": 2,
+      "1.875": 1,
+      "3.0": 2,
+      "4.0": 4,
+      "5.0": 1
+    }
+  },
+  "deviations_sample": [
+    {
+      "key": "有单期借款|中额度使用率|6|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.4,
+      "plan_a_rate": 0.6227325283655495,
+      "plan_b_rate": 0.4,
+      "plan_a_after_limit": 274726.771050178
+    },
+    {
+      "key": "无单期|低额度使用率|6|C",
+      "deployed_rate": 0.2,
+      "eligible_abc": true,
+      "raw_cap": 0.1,
+      "plan_a_rate": 0.1556831320913874,
+      "plan_b_rate": 0.1,
+      "plan_a_after_limit": 18685.41173952926
+    },
+    {
+      "key": "无单期|低额度使用率|1|A",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.5,
+      "plan_a_rate": 0.7784156604569368,
+      "plan_b_rate": 0.5,
+      "plan_a_after_limit": 12659.11673260895
+    },
+    {
+      "key": "无单期借款|高额度使用率|7|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 100958.0805216949
+    },
+    {
+      "key": "无单期|高额度使用率|7|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.8,
+      "plan_a_rate": 1.245465056731099,
+      "plan_b_rate": 0.8,
+      "plan_a_after_limit": 16890.10747359924
+    },
+    {
+      "key": "无单期借款|低额度使用率|7|A",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.5,
+      "plan_a_rate": 0.7784156604569368,
+      "plan_b_rate": 0.5,
+      "plan_a_after_limit": 140183.6240833426
+    },
+    {
+      "key": "有单期借款|低额度使用率|3|A",
+      "deployed_rate": 0.4,
+      "eligible_abc": true,
+      "raw_cap": 0.3,
+      "plan_a_rate": 0.467049396274162,
+      "plan_b_rate": 0.3,
+      "plan_a_after_limit": 270814.1239887939
+    },
+    {
+      "key": "无单期|中额度使用率|6|A",
+      "deployed_rate": 0.6,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 20497.8052076259
+    },
+    {
+      "key": "有单期借款|中额度使用率|4|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.4,
+      "plan_a_rate": 0.6227325283655495,
+      "plan_b_rate": 0.4,
+      "plan_a_after_limit": 259704.4562777905
+    },
+    {
+      "key": "无单期|低额度使用率|1|B",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.2,
+      "plan_a_rate": 0.3113662641827747,
+      "plan_b_rate": 0.2,
+      "plan_a_after_limit": 8171.01038642272
+    },
+    {
+      "key": "有单期借款|低额度使用率|5|A",
+      "deployed_rate": 0.4,
+      "eligible_abc": true,
+      "raw_cap": 0.3,
+      "plan_a_rate": 0.467049396274162,
+      "plan_b_rate": 0.3,
+      "plan_a_after_limit": 342123.4566263016
+    },
+    {
+      "key": "无单期借款|高额度使用率|1|A",
+      "deployed_rate": 1.2,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 52198.73432018234
+    },
+    {
+      "key": "有单期借款|低额度使用率|2|A",
+      "deployed_rate": 0.4,
+      "eligible_abc": true,
+      "raw_cap": 0.3,
+      "plan_a_rate": 0.467049396274162,
+      "plan_b_rate": 0.3,
+      "plan_a_after_limit": 224221.3111472807
+    },
+    {
+      "key": "有单期借款|中额度使用率|5|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.4,
+      "plan_a_rate": 0.6227325283655495,
+      "plan_b_rate": 0.4,
+      "plan_a_after_limit": 202033.8298442979
+    },
+    {
+      "key": "有单期借款|低额度使用率|4|A",
+      "deployed_rate": 0.4,
+      "eligible_abc": true,
+      "raw_cap": 0.3,
+      "plan_a_rate": 0.467049396274162,
+      "plan_b_rate": 0.3,
+      "plan_a_after_limit": 272369.2209442622
+    },
+    {
+      "key": "无单期|中额度使用率|4|A",
+      "deployed_rate": 0.8,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 18771.12656769626
+    },
+    {
+      "key": "有单期借款|高额度使用率|5|B",
+      "deployed_rate": 0.8,
+      "eligible_abc": true,
+      "raw_cap": 0.4,
+      "plan_a_rate": 0.6227325283655495,
+      "plan_b_rate": 0.4,
+      "plan_a_after_limit": 143217.2423221176
+    },
+    {
+      "key": "无单期|低额度使用率|2|B",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.2,
+      "plan_a_rate": 0.3113662641827747,
+      "plan_b_rate": 0.2,
+      "plan_a_after_limit": 14330.79305495355
+    },
+    {
+      "key": "有单期借款|高额度使用率|5|C",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.2,
+      "plan_a_rate": 0.3113662641827747,
+      "plan_b_rate": 0.2,
+      "plan_a_after_limit": 79712.47029120688
+    },
+    {
+      "key": "无单期|中额度使用率|7|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 16410.02326980962
+    },
+    {
+      "key": "无单期|高额度使用率|6|A",
+      "deployed_rate": 0.8,
+      "eligible_abc": true,
+      "raw_cap": 1.5,
+      "plan_a_rate": 2.33524698137081,
+      "plan_b_rate": 1.5,
+      "plan_a_after_limit": 29942.52898370233
+    },
+    {
+      "key": "无单期|中额度使用率|7|C",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.8,
+      "plan_a_rate": 1.245465056731099,
+      "plan_b_rate": 0.8,
+      "plan_a_after_limit": 12989.15171278299
+    },
+    {
+      "key": "无单期借款|高额度使用率|6|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 1.0,
+      "plan_a_rate": 1.556831320913874,
+      "plan_b_rate": 1.0,
+      "plan_a_after_limit": 94768.78947130886
+    },
+    {
+      "key": "无单期借款|高额度使用率|7|B",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.8,
+      "plan_a_rate": 1.245465056731099,
+      "plan_b_rate": 0.8,
+      "plan_a_after_limit": 64133.77481041678
+    },
+    {
+      "key": "有单期借款|中额度使用率|7|B",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.2,
+      "plan_a_rate": 0.3113662641827747,
+      "plan_b_rate": 0.2,
+      "plan_a_after_limit": 190300.3087535391
+    },
+    {
+      "key": "无单期|高额度使用率|5|A",
+      "deployed_rate": 1.0,
+      "eligible_abc": true,
+      "raw_cap": 1.5,
+      "plan_a_rate": 2.33524698137081,
+      "plan_b_rate": 1.5,
+      "plan_a_after_limit": 26159.44850959733
+    },
+    {
+      "key": "无单期借款|中额度使用率|7|A",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.5,
+      "plan_a_rate": 0.7784156604569368,
+      "plan_b_rate": 0.5,
+      "plan_a_after_limit": 76630.46481780178
+    },
+    {
+      "key": "有单期借款|中额度使用率|3|A",
+      "deployed_rate": 0.5,
+      "eligible_abc": true,
+      "raw_cap": 0.4,
+      "plan_a_rate": 0.6227325283655495,
+      "plan_b_rate": 0.4,
+      "plan_a_after_limit": 165093.3226811951
+    },
+    {
+      "key": "无单期|中额度使用率|5|A",
+      "deployed_rate": 1.0,
+      "eligible_abc": true,
+      "raw_cap": 0.8,
+      "plan_a_rate": 1.245465056731099,
+      "plan_b_rate": 0.8,
+      "plan_a_after_limit": 12366.09684814056
+    },
+    {
+      "key": "无单期|低额度使用率|3|B",
+      "deployed_rate": 0.3,
+      "eligible_abc": true,
+      "raw_cap": 0.2,
+      "plan_a_rate": 0.3113662641827747,
+      "plan_b_rate": 0.2,
+      "plan_a_after_limit": 19567.86850173
+    }
+  ],
+  "coefficient_distribution": {
+    "0.5": 38,
+    "0.2": 27,
+    "0.3": 31,
+    "0.8": 21,
+    "0.4": 19,
+    "0.6": 34,
+    "1.0": 10,
+    "1.2": 4,
+    "1.5": 4,
+    "2.0": 3,
+    "2.5": 1,
+    "3.0": 1,
+    "0.7": 1,
+    "0.0": 117,
+    "0.15": 1,
+    "0.1": 2,
+    "0.25": 1
+  }
+}

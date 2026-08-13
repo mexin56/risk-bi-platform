@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pyodps>=0.13.0
+pandas>=2.0
+numpy>=1.24

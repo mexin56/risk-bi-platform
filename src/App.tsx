@@ -4,7 +4,9 @@ import {
   Activity,
   Bell,
   ChevronDown,
+  CircleDollarSign,
   Gauge,
+  Target,
   Layers,
   LogOut,
   Network,
@@ -22,18 +24,24 @@ import Channel from '@/pages/Channel';
 import Fraud from '@/pages/Fraud';
 import Vintage from '@/pages/Vintage';
 import ModelScore from '@/pages/ModelScore';
+import Stability from '@/pages/Stability';
+import CreditStrategy from '@/pages/CreditStrategy';
+import CreditAttribution from '@/pages/CreditAttribution';
 import ThemeSettings from '@/components/ThemeSettings';
 import { applyTheme, getTheme, type ThemePreset } from '@/lib/theme';
 
-type PageKey = 'overview' | 'lifecycle' | 'channel' | 'fraud' | 'vintage' | 'model';
+type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability';
 
 const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] = [
   { key: 'overview', label: '大盘数据', icon: Gauge, desc: '经营全景与资产质量' },
   { key: 'lifecycle', label: '客户生命周期', icon: Users, desc: '贷前·授信·交易·复贷·催收' },
+  { key: 'creditStrategy', label: '提额策略监控', icon: CircleDollarSign, desc: '系数核验 · 额度目标 · 提额归因' },
+  { key: 'attribution', label: '授信归因监控', icon: Target, desc: '异常归因 · Top-K · 专家归因' },
   { key: 'channel', label: '渠道质量', icon: Network, desc: '助贷渠道 · 通过率×风险×成本' },
   { key: 'fraud', label: '反欺诈监控', icon: ShieldAlert, desc: '规则命中 · 设备聚集 · 团伙预警' },
   { key: 'vintage', label: 'Vintage 监控', icon: Layers, desc: '账龄结构与 Cohort 表现' },
   { key: 'model', label: '模型分监控', icon: Activity, desc: 'PSI / KS / 分布漂移' },
+  { key: 'stability', label: '模型稳定性', icon: ShieldCheck, desc: 'PSI趋势 · 迁移矩阵 · 漂移归因' },
 ];
 
 function LiveClock() {
@@ -348,10 +356,13 @@ export default function App() {
             >
               {page === 'overview' && <Overview />}
               {page === 'lifecycle' && <Lifecycle stage={stage} />}
+              {page === 'creditStrategy' && <CreditStrategy />}
+              {page === 'attribution' && <CreditAttribution />}
               {page === 'channel' && <Channel />}
               {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}
               {page === 'model' && <ModelScore />}
+              {page === 'stability' && <Stability />}
             </motion.div>
           </AnimatePresence>
         </main>

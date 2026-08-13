@@ -1,0 +1,57 @@
+{
+  "version": "v2.2",
+  "table": "pb_biz_credit.lj_sx_cnt_analysis_summary",
+  "date_field": "create_date",
+  "count_field": "cnt",
+  "approval_fields": ["approval_cnt", "approval_jy0_cnt"],
+  "lookback_days": 15,
+  "dimensions": [
+    "traffic_channel",
+    "systemtype",
+    "device_brand",
+    "authen_type",
+    "ios_install_sysup_gap_mins_flag",
+    "reg_sx_days",
+    "high_risk_birth",
+    "if_recommend_flag",
+    "state_name_clean",
+    "register_software",
+    "first_channel"
+  ],
+  "field_labels": {
+    "traffic_channel": "流量渠道",
+    "systemtype": "设备系统",
+    "device_brand": "设备品牌",
+    "authen_type": "认证方式",
+    "ios_install_sysup_gap_mins_flag": "iOS安装/系统间隔",
+    "reg_sx_days": "注册至授信间隔",
+    "high_risk_birth": "高风险生日标识",
+    "if_recommend_flag": "推荐/转介绍标识",
+    "state_name_clean": "州/地区",
+    "register_software": "注册软件/客户端",
+    "first_channel": "首次来源渠道"
+  },
+  "windows": [
+    { "key": "1d", "label": "近1天", "observation_days": 1, "purpose": "识别单日尖峰", "color": "#5B9BD5" },
+    { "key": "3d", "label": "近3天", "observation_days": 3, "purpose": "识别短期放量", "color": "#ED7D31" },
+    { "key": "7d", "label": "近7天", "observation_days": 7, "purpose": "识别趋势抬升", "color": "#70AD47" }
+  ],
+  "thresholds": [
+    { "level": 1, "label": "Level1 黄色", "min_observation_count": 30, "min_growth_factor": 1.5, "min_structure_lift_factor": 1.5, "min_z_score": 2 },
+    { "level": 2, "label": "Level2 橙色", "min_observation_count": 50, "min_growth_factor": 2, "min_structure_lift_factor": 2, "min_z_score": 3 },
+    { "level": 3, "label": "Level3 红色", "min_observation_count": 100, "min_growth_factor": 3, "min_structure_lift_factor": 3, "min_z_score": 5 }
+  ],
+  "top_k": { "single_limit": 10, "pair_limit": 5 },
+  "suppression_rules": [
+    { "field": "traffic_channel", "value": "FLEXI_REPAYMENT_OPEN_PDL", "reason": "免归因：业务指定渠道" },
+    { "field": "ios_install_sysup_gap_mins_flag", "value": "none", "reason": "免归因：iOS none 口径" },
+    { "field": "reg_sx_days", "value": "10+", "reason": "免归因：长注册间隔客群" },
+    { "field": "high_risk_birth", "value": "0", "reason": "免归因：高风险生日标识=0" },
+    { "field": "if_recommend_flag", "value": "0", "reason": "免归因：非推荐/转介绍客群" }
+  ],
+  "expert_path": [
+    { "field": "register_software", "value": "PalmPay_IOS", "label": "强制单维：PalmPay_IOS" },
+    { "field": "reg_sx_days", "value": "0", "label": "强制双维：reg_sx_days=0" },
+    { "field": "state_name_clean", "value": "*", "label": "强制三维：state_name_clean=全量" }
+  ]
+}

@@ -352,6 +352,108 @@ export const modelList = [
   { name: '白名单预筛分 v1.2', status: '在线', psi: 0.037, ks: 0.335, auc: 0.689, owner: '风控模型组' },
 ];
 
+// ---------- 4.5 模型分稳定性监控 ----------
+export interface StabilityPsiPoint {
+  date: string;
+  A卡PSI: number;
+  B卡PSI: number;
+}
+
+// A卡在第 20 天附近发生渠道投放变化, PSI 持续抬升并突破 0.10 关注线
+export function getStabilityPsiTrend(): StabilityPsiPoint[] {
+  const rnd = seededRandom(731);
+  return lastNDays(30).map((date, i) => {
+    const shock = i >= 20 ? 0.075 + (i - 20) * 0.004 + rnd() * 0.012 : 0;
+    return {
+      date,
+      A卡PSI: +(0.052 + rnd() * 0.028 + shock).toFixed(3),
+      B卡PSI: +(0.044 + rnd() * 0.024 + shock * 0.45).toFixed(3),
+    };
+  });
+}
+
+export interface StabilityBin {
+  bin: string;
+  range: string;
+  basePct: number;
+  curPct: number;
+  psiContrib: number; // PSI 贡献
+  drift: number; // 占比变化 pp
+}
+
+// 低分段占比抬升、中高分段占比下降 → 客群下沉
+const stabilityBase = [2.4, 6.8, 12.5, 18.2, 24.6, 22.1, 13.4];
+export const stabilityBins: StabilityBin[] = (() => {
+  const cur = [1.9, 5.6, 10.8, 15.7, 27.9, 24.8, 13.3];
+  return stabilityBase.map((b, i) => {
+    const drift = +(cur[i] - b).toFixed(1);
+    return {
+      bin: `Bin${i + 1}`,
+      range: ['≤400', '401-480', '481-560', '561-640', '641-720', '721-800', '≥801'][i],
+      basePct: b,
+      curPct: cur[i],
+      psiContrib: +(Math.abs((cur[i] - b) * Math.log(cur[i] / b) / 100)).toFixed(4),
+      drift,
+    };
+  });
+})();
+
+// 迁移矩阵: 行=基准分箱, 列=当前分箱, 单位 %
+export const migrationMatrix: number[][] = [
+  [72.1, 18.4, 5.2, 2.1, 1.1, 0.7, 0.4],
+  [11.2, 65.8, 14.6, 4.8, 2.0, 1.0, 0.6],
+  [3.4, 12.7, 61.9, 13.8, 5.2, 2.1, 0.9],
+  [1.8, 4.6, 12.2, 58.4, 15.3, 5.6, 2.1],
+  [1.1, 2.3, 5.1, 13.6, 56.8, 15.2, 5.9],
+  [0.6, 1.2, 2.4, 5.8, 14.7, 60.2, 15.1],
+  [0.5, 0.8, 1.6, 2.9, 6.2, 16.4, 71.6],
+];
+
+export type AlertLevel = 'crit' | 'warn' | 'info' | 'ok';
+export interface StabilityAlert {
+  level: AlertLevel;
+  model: string;
+  detail: string;
+  time: string;
+  tag: string;
+}
+
+export const stabilityAlerts: StabilityAlert[] = [
+  { level: 'crit', model: 'A卡 · 贷前信用分', detail: 'PSI 0.182 连续 5 日 > 0.10 关注线, 7/28 触及 0.213', time: '今天 09:42', tag: '严重' },
+  { level: 'warn', model: 'A卡 · 贷前信用分', detail: '通过率 +2.14pp 超出 ±1.5pp 阈值, 低分段占比抬升 3.3pp', time: '今天 08:15', tag: '偏高' },
+  { level: 'warn', model: 'A卡 · 贷前信用分', detail: '641-720 分箱迁移率 15.3% > 历史均值 9.8%', time: '昨天 22:30', tag: '偏高' },
+  { level: 'info', model: 'B卡 · 贷中行为分', detail: 'PSI 0.087 连续 3 日上行, 距关注线 0.013, 建议持续观察', time: '昨天 18:05', tag: '观察' },
+  { level: 'ok', model: 'D卡 · 定价分', detail: 'PSI 回落至 0.042, 告警自动解除', time: '7/29 10:12', tag: '已恢复' },
+];
+
+export interface ModelHealthRank {
+  name: string;
+  score: number;
+  status: '健康' | '关注' | '预警';
+}
+
+export const modelHealthRanks: ModelHealthRank[] = [
+  { name: 'C卡 · 反欺诈分', score: 94, status: '健康' },
+  { name: 'D卡 · 定价分', score: 88, status: '健康' },
+  { name: 'B卡 · 贷中行为分', score: 81, status: '健康' },
+  { name: 'A卡 · 贷前信用分', score: 72, status: '关注' },
+  { name: 'E卡 · 老客提额分', score: 63, status: '预警' },
+];
+
+export interface DriftAttr {
+  name: string;
+  pct: number;
+  note: string;
+}
+
+export const driftAttrs: DriftAttr[] = [
+  { name: '特征_收入区间', pct: 41, note: '客群下沉, 中低收入占比↑' },
+  { name: '特征_职业类型', pct: 23, note: '自由职业占比↑' },
+  { name: '特征_申请渠道', pct: 14, note: '新渠道投放放量' },
+  { name: '特征_负债收入比', pct: 9, note: '—' },
+  { name: '其他特征', pct: 13, note: '—' },
+];
+
 // ==================== 生命周期 · 五环节数据 ====================
 export interface StageKpi {
   label: string;

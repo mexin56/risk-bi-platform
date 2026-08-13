@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>提额策略上线监控分析报告｜2026-08-12</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #667085;
+      --subtle: #98a2b3;
+      --line: #e7ebf2;
+      --canvas: #f5f7fb;
+      --surface: #ffffff;
+      --blue: #3772f6;
+      --blue-soft: #edf3ff;
+      --green: #12976a;
+      --green-soft: #eaf8f2;
+      --amber: #c77900;
+      --amber-soft: #fff6df;
+      --red: #d7464f;
+      --red-soft: #fff0f1;
+      --navy: #1e386b;
+      --shadow: 0 12px 32px rgba(26, 43, 77, .07);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar {
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      color: #dce6ff;
+      background: linear-gradient(110deg, #152956, #1f4ba5 60%, #3772f6);
+    }
+    .topbar-inner { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .02em; color: #fff; }
+    .brand-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 8px; background: rgba(255,255,255,.18); font-size: 13px; }
+    .top-meta { color: rgba(255,255,255,.76); text-align: right; }
+    .hero { color: #fff; background: linear-gradient(110deg, #152956 0%, #1d469b 58%, #3772f6 100%); padding: 43px 0 50px; position: relative; overflow: hidden; }
+    .hero::after { content: ""; position: absolute; width: 500px; height: 500px; right: -150px; top: -250px; border: 1px solid rgba(255,255,255,.14); border-radius: 50%; box-shadow: 0 0 0 54px rgba(255,255,255,.035), 0 0 0 108px rgba(255,255,255,.025); }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 36px; position: relative; z-index: 1; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; padding: 4px 10px; color: #dce8ff; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #7df1c2; box-shadow: 0 0 0 4px rgba(125,241,194,.16); }
+    h1 { margin: 16px 0 11px; font-size: clamp(27px, 4vw, 39px); line-height: 1.2; letter-spacing: -.035em; }
+    .hero p { max-width: 700px; margin: 0; color: #dbe6fd; font-size: 14px; }
+    .hero-note { margin-top: 18px; font-size: 11px; color: #bbcef8; }
+    .hero-result { align-self: center; padding: 20px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16); border-radius: 16px; backdrop-filter: blur(4px); }
+    .hero-result span { display: block; color: #cbdaf8; font-size: 11px; }
+    .hero-result strong { display: block; margin: 3px 0 5px; font-size: 30px; letter-spacing: -.05em; }
+    .hero-result small { color: #dce7fd; font-size: 11px; }
+    .content { padding: 0 0 60px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-top: -25px; position: relative; z-index: 2; }
+    .kpi { min-height: 127px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: var(--shadow); position: relative; overflow: hidden; }
+    .kpi::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--blue); }
+    .kpi.warn::before { background: var(--amber); }
+    .kpi.danger::before { background: var(--red); }
+    .kpi.success::before { background: var(--green); }
+    .kpi-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .045em; }
+    .kpi-value { margin-top: 11px; color: var(--ink); font-size: 26px; line-height: 1; font-weight: 750; letter-spacing: -.05em; }
+    .kpi-unit { margin-left: 3px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
+    .kpi-foot { margin-top: 9px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 25px 0 18px; }
+    .nav a { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: #fff; text-decoration: none; font-size: 11px; font-weight: 650; }
+    .nav a:hover { border-color: #b5cdfc; color: var(--blue); }
+    .section { margin-top: 19px; padding: 23px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); box-shadow: 0 3px 10px rgba(26,43,77,.025); }
+    .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+    .section-kicker { color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+    h2 { margin: 3px 0 0; font-size: 20px; line-height: 1.35; letter-spacing: -.025em; }
+    .section-desc { max-width: 550px; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .tag { display: inline-flex; align-items: center; white-space: nowrap; padding: 4px 8px; border: 1px solid; border-radius: 6px; font-size: 10.5px; font-weight: 750; }
+    .tag.blue { background: var(--blue-soft); border-color: #cfe0ff; color: #245ec7; }
+    .tag.green { background: var(--green-soft); border-color: #c7ecdd; color: #0b7b55; }
+    .tag.amber { background: var(--amber-soft); border-color: #f5dfa2; color: #a46000; }
+    .tag.red { background: var(--red-soft); border-color: #f7cdd1; color: #bd3440; }
+    .summary { display: grid; grid-template-columns: 1.12fr .88fr; gap: 15px; }
+    .callout { padding: 18px; border-radius: 11px; background: #f7f9fd; border: 1px solid #e5ebf7; }
+    .callout h3 { margin: 0 0 7px; font-size: 15px; letter-spacing: -.015em; }
+    .callout p { margin: 0; color: #4d5c76; font-size: 12px; line-height: 1.7; }
+    .callout strong { color: var(--red); }
+    .quick-list { display: grid; gap: 9px; }
+    .quick-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .quick-row:last-child { border-bottom: 0; }
+    .quick-index { width: 21px; height: 21px; flex: 0 0 21px; display: grid; place-items: center; border-radius: 6px; background: var(--blue-soft); color: var(--blue); font-size: 10px; font-weight: 800; }
+    .quick-row b { display: block; font-size: 12px; }
+    .quick-row span { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; }
+    .scenario { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; align-items: end; min-height: 230px; padding: 14px 10px 0; border-bottom: 1px solid var(--line); position: relative; }
+    .scenario::before { content: "目标 50,000 元"; position: absolute; top: 14px; left: 0; right: 0; border-top: 1px dashed var(--amber); color: #a46000; font-size: 10px; text-align: right; line-height: 1; }
+    .bar-item { min-width: 0; text-align: center; }
+    .bar-wrap { height: 166px; display: flex; align-items: end; justify-content: center; }
+    .bar { width: min(70px, 76%); min-height: 10px; border-radius: 7px 7px 0 0; background: #cbd5e1; position: relative; transition: transform .2s ease; }
+    .bar:hover { transform: translateY(-3px); }
+    .bar.current { background: linear-gradient(180deg, #5d91ff, var(--blue)); }
+    .bar.what-if { background: linear-gradient(180deg, #a1c4ff, #6da2ff); }
+    .bar.target { background: linear-gradient(180deg, #ffd46b, #f0a20a); }
+    .bar-value { position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); color: #334155; font-size: 10px; font-weight: 800; white-space: nowrap; }
+    .bar-label { margin-top: 8px; color: #475569; font-size: 11px; font-weight: 700; }
+    .bar-note { margin-top: 2px; min-height: 30px; color: var(--muted); font-size: 9.5px; line-height: 1.35; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .validation { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; }
+    .validation-card { padding: 15px; border: 1px solid var(--line); border-radius: 11px; }
+    .validation-card .label { color: var(--muted); font-size: 11px; font-weight: 700; }
+    .validation-card .number { margin: 8px 0 3px; font-size: 24px; line-height: 1; font-weight: 780; letter-spacing: -.04em; }
+    .validation-card .note { color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+    .validation-card.red { background: linear-gradient(135deg, #fff, #fff5f6); border-color: #f5d8dc; }
+    .validation-card.red .number { color: var(--red); }
+    .validation-card.amber { background: linear-gradient(135deg, #fff, #fffaf0); border-color: #f2e3bb; }
+    .validation-card.amber .number { color: var(--amber); }
+    .validation-card.blue { background: linear-gradient(135deg, #fff, #f4f8ff); border-color: #d8e5fb; }
+    .validation-card.blue .number { color: var(--blue); }
+    .formula { margin-top: 15px; padding: 13px 15px; border-radius: 9px; background: #192d59; color: #e7efff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; overflow-x: auto; }
+    .formula span { color: #99bbff; }
+    table { width: 100%; border-collapse: collapse; }
+    th { padding: 10px 11px; color: #526077; background: #f5f7fb; border-bottom: 1px solid #dfe5ef; font-size: 10.5px; text-align: left; letter-spacing: .02em; white-space: nowrap; }
+    td { padding: 11px; border-bottom: 1px solid var(--line); color: #344054; font-size: 11.5px; }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .emphasis { font-weight: 750; color: var(--ink); }
+    .negative { color: var(--red); font-weight: 750; }
+    .positive { color: var(--green); font-weight: 750; }
+    .reason-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; }
+    .reason { position: relative; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+    .reason-index { font-family: ui-monospace, monospace; color: var(--subtle); font-size: 10px; font-weight: 800; }
+    .reason h3 { margin: 7px 0 8px; font-size: 13px; line-height: 1.4; }
+    .reason .metric { margin-bottom: 8px; color: var(--red); font-size: 16px; font-weight: 800; letter-spacing: -.025em; }
+    .reason p { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.6; }
+    .reason.blue .metric { color: var(--blue); }
+    .reason.amber .metric { color: var(--amber); }
+    .flow { display: flex; align-items: stretch; gap: 8px; }
+    .flow-step { flex: 1; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #f9fbff; }
+    .flow-step .flow-label { color: var(--muted); font-size: 10px; font-weight: 700; }
+    .flow-step strong { display: block; margin-top: 5px; color: var(--ink); font-size: 18px; letter-spacing: -.04em; }
+    .flow-step span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .flow-arrow { align-self: center; color: #9aaccc; font-size: 18px; }
+    .recommendations { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
+    .rec { display: grid; grid-template-columns: 35px 1fr; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .rec:nth-last-child(-n + 2) { border-bottom: 0; }
+    .priority { height: 23px; display: grid; place-items: center; border-radius: 6px; color: #fff; background: var(--red); font-size: 10px; font-weight: 800; }
+    .priority.p1 { background: var(--amber); }
+    .priority.p2 { background: var(--blue); }
+    .rec h3 { margin: 0; font-size: 12px; }
+    .rec p { margin: 3px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.6; }
+    .scope { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .scope-box { padding: 15px; border-radius: 10px; background: #f6f8fc; border: 1px solid var(--line); }
+    .scope-box h3 { margin: 0 0 6px; font-size: 12px; }
+    .scope-box ul { margin: 0; padding-left: 17px; color: var(--muted); font-size: 10.5px; line-height: 1.8; }
+    .footer { padding: 24px 0 32px; color: var(--subtle); font-size: 10.5px; text-align: center; }
+    @media (max-width: 900px) {
+      .kpi-grid, .reason-grid { grid-template-columns: repeat(2, 1fr); }
+      .hero-grid, .summary, .split, .scope { grid-template-columns: 1fr; }
+      .hero-result { max-width: 330px; }
+      .validation { grid-template-columns: 1fr; }
+      .recommendations { grid-template-columns: 1fr; }
+      .rec:nth-last-child(2) { border-bottom: 1px solid var(--line); }
+    }
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .topbar-inner { align-items: flex-start; padding: 10px 0; flex-direction: column; gap: 3px; }
+      .top-meta { text-align: left; }
+      .hero { padding: 30px 0 42px; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; gap: 9px; margin-top: -20px; }
+      .kpi { min-height: 120px; padding: 13px; }
+      .section { padding: 17px; }
+      .section-head { flex-direction: column; gap: 8px; }
+      .scenario { gap: 5px; padding-left: 0; padding-right: 0; }
+      .bar-label { font-size: 9px; }
+      .bar-note { font-size: 8px; }
+      .flow { flex-direction: column; }
+      .flow-arrow { align-self: center; transform: rotate(90deg); }
+      .table-wrap { overflow-x: auto; }
+      table { min-width: 650px; }
+    }
+    @media print {
+      @page { margin: 12mm; size: A4; }
+      body { background: #fff; font-size: 10px; }
+      .topbar { background: #17366f !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .hero { padding: 22px 0 28px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .hero::after, .nav { display: none; }
+      .content { padding-bottom: 0; }
+      .section, .kpi { box-shadow: none; break-inside: avoid; }
+      .section { margin-top: 10px; padding: 15px; }
+      .kpi-grid { margin-top: -16px; }
+      .kpi { min-height: 92px; }
+      .scenario { min-height: 175px; }
+      .bar-wrap { height: 120px; }
+      .footer { padding-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <div class="brand"><span class="brand-mark">◈</span>风控 BI 平台 · 策略监控报告</div>
+      <div class="top-meta">版本：上线首日快照 · 数据生成日期：2026-08-13</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="shell hero-grid">
+      <div>
+        <span class="eyebrow"><i class="live-dot"></i>上线后首日监控</span>
+        <h1>提额策略 · 5 万目标达成诊断</h1>
+        <p>聚焦 2026-08-12 新策略（<b>defq-重构</b>）跑批结果：核对提额幅度是否按表落地、识别额度目标缺口，并定位整体户均额度未达标的直接原因。</p>
+        <div class="hero-note">数据表：pb_biz_credit.flexi_cash_jq_result_v1 · 业务日：2026-08-12 · 新策略有效样本：33,402 人</div>
+      </div>
+      <div class="hero-result">
+        <span>新策略提额后户均额度</span>
+        <strong>47,665 元</strong>
+        <small>距 50,000 元目标仍差 2,335 元 / 户</small>
+      </div>
+    </div>
+  </section>
+
+  <main class="shell content">
+    <div class="kpi-grid">
+      <article class="kpi">
+        <div class="kpi-label">提额后新策略均额</div>
+        <div class="kpi-value">47,665<span class="kpi-unit">元</span></div>
+        <div class="kpi-foot">提额前 43,206 元，实际 +4,458 元</div>
+      </article>
+      <article class="kpi success">
+        <div class="kpi-label">均额实际提升</div>
+        <div class="kpi-value">+10.3<span class="kpi-unit">%</span></div>
+        <div class="kpi-foot">说明上线首日并非没有额度提升</div>
+      </article>
+      <article class="kpi warn">
+        <div class="kpi-label">目标增量达成率</div>
+        <div class="kpi-value">65.6<span class="kpi-unit">%</span></div>
+        <div class="kpi-foot">实际 1.489 亿 / 达标所需 2.269 亿</div>
+      </article>
+      <article class="kpi danger">
+        <div class="kpi-label">策略系数一致率</div>
+        <div class="kpi-value">42.1<span class="kpi-unit">%</span></div>
+        <div class="kpi-foot">5,449 / 12,943 名实际提额客户</div>
+      </article>
+    </div>
+
+    <nav class="nav" aria-label="报告章节导航">
+      <a href="#overview">结论摘要</a><a href="#target">目标达成</a><a href="#validation">策略核验</a><a href="#cause">原因分析</a><a href="#actions">处理建议</a><a href="#scope">口径说明</a>
+    </nav>
+
+    <section id="overview" class="section">
+      <div class="section-head">
+        <div><div class="section-kicker">EXECUTIVE SUMMARY</div><h2>结论：实际提升存在，但系数、闸门与分流共同造成目标缺口</h2></div>
+        <span class="tag amber">首日监控结论</span>
+      </div>
+      <div class="summary">
+        <div class="callout">
+          <h3>总体判断</h3>
+          <p>新策略样本户均额度从 <b>43,206 元</b>升至 <b>47,665 元</b>，实际增加 <b>4,458 元（+10.3%）</b>。但距 5 万目标尚差 <strong>2,335 元 / 户</strong>，对应总缺口约 <strong>7,800 万元</strong>。最优先的落地问题是：实际提额客户的 <code>cash_remark1</code> 与 315 格系数表仅 <strong>42.1%</strong> 一致。</p>
+        </div>
+        <div class="quick-list">
+          <div class="quick-row"><span class="quick-index">01</span><div><b>提额客群终态额度不足</b><span>实际提额客户终态均额 44,433 元；达标所需 50,460 元。</span></div></div>
+          <div class="quick-row"><span class="quick-index">02</span><div><b>提额闸门覆盖有限</b><span>14,650 人配置正向提幅但没有实际提额。</span></div></div>
+          <div class="quick-row"><span class="quick-index">03</span><div><b>新旧策略仍混跑</b><span>19.7% 流量走旧策略；其中 1,165 人发生降额。</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="target" class="section">
+      <div class="section-head">
+        <div><div class="section-kicker">TARGET GAP</div><h2>实际户均额度与 5 万目标的差距路径</h2><p class="section-desc">浅蓝柱为同一批次客户的敏感性测算，用于归因，不等同于带资格闸门和正式灰度条件下的生产预测。</p></div>
+        <span class="tag amber">缺口 2,335 元 / 户</span>
+      </div>
+      <div class="scenario" role="img" aria-label="户均额度从提额前到目标的对比柱状图">
+        <div class="bar-item"><div class="bar-wrap"><div class="bar" style="height: 36%;"><span class="bar-value">43,206</span></div></div><div class="bar-label">提额前</div><div class="bar-note">新策略有效样本基线</div></div>
+        <div class="bar-item"><div class="bar-wrap"><div class="bar current" style="height: 73%;"><span class="bar-value">47,665</span></div></div><div class="bar-label">实际跑批</div><div class="bar-note">+4,458 元 / 户</div></div>
+        <div class="bar-item"><div class="bar-wrap"><div class="bar what-if" style="height: 79%;"><span class="bar-value">48,325</span></div></div><div class="bar-label">系数表一致</div><div class="bar-note">仅修正系数偏差</div></div>
+        <div class="bar-item"><div class="bar-wrap"><div class="bar what-if" style="height: 92%;"><span class="bar-value">49,239</span></div></div><div class="bar-label">方案 A 幅度</div><div class="bar-note">仅 A/B/C 同批次敏感性</div></div>
+        <div class="bar-item"><div class="bar-wrap"><div class="bar target" style="height: 100%;"><span class="bar-value">50,000</span></div></div><div class="bar-label">目标</div><div class="bar-note">仍需兼顾覆盖与封顶</div></div>
+      </div>
+      <div class="table-wrap" style="margin-top:18px;">
+        <table>
+          <thead><tr><th>指标</th><th class="num">新策略有效样本</th><th class="num">全量有效样本（含旧策略）</th></tr></thead>
+          <tbody>
+            <tr><td>提额前户均额度</td><td class="num">43,206 元</td><td class="num">42,839 元</td></tr>
+            <tr><td class="emphasis">提额后户均额度</td><td class="num emphasis">47,665 元</td><td class="num">46,682 元</td></tr>
+            <tr><td>户均提升</td><td class="num positive">+4,458 元</td><td class="num positive">+3,843 元</td></tr>
+            <tr><td>提升比例</td><td class="num">+10.3%</td><td class="num">+9.0%</td></tr>
+            <tr><td>距 5 万目标</td><td class="num negative">-2,335 元 / 户</td><td class="num negative">-3,318 元 / 户</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="flow" style="margin-top:16px;">
+        <div class="flow-step"><div class="flow-label">有效样本</div><strong>33,402 人</strong><span>新策略、额度字段有效</span></div><div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-label">实际提额</div><strong>12,942 人</strong><span>覆盖率 38.7%</span></div><div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-label">未提额</div><strong>20,460 人</strong><span>额度保持不变</span></div><div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-label">达标所需的提额客户均额</div><strong>50,460 元</strong><span>当前为 44,433 元，仍差 6,027 元</span></div>
+      </div>
+    </section>
+
+    <section id="validation" class="section">
+      <div class="section-head">
+        <div><div class="section-kicker">STRATEGY VALIDATION</div><h2>策略是否按表落地：两类问题需要分别处理</h2><p class="section-desc">“系数表一致性”核验配置/查表结果；“额度公式一致性”核验结果表计算执行，两者不应混为一类问题。</p></div>
+        <span class="tag red">优先处理</span>
+      </div>
+      <div class="validation">
+        <article class="validation-card red"><div class="label">提额系数表一致率</div><div class="number">42.1%</div><div class="note">5,449 / 12,943 名实际提额客户的 cash_remark1 与 315 格系数表一致。</div></article>
+        <article class="validation-card amber"><div class="label">额度公式回算一致率</div><div class="number">86.9%</div><div class="note">11,252 / 12,942 名完整字段客户按实际提幅、额度盖帽、单次提幅盖帽回算一致。</div></article>
+        <article class="validation-card blue"><div class="label">系数偏差的净金额影响</div><div class="number">2,207 万</div><div class="note">同一提额客群、未带帽敏感性下，实际较系数表少增的净金额估算。</div></article>
+      </div>
+      <div class="formula"><span>额度回算：</span>min( 向上取整[提额前额度 × (1 + 提额幅度)]，客户额度盖帽，提额前额度 + 单次提幅盖帽 )</div>
+      <div class="table-wrap" style="margin-top:15px;">
+        <table>
+          <thead><tr><th>核验项</th><th class="num">结果</th><th>监控结论</th></tr></thead>
+          <tbody>
+            <tr><td>实际系数低于策略表</td><td class="num">3,895 人</td><td>高额度客群权重更高，形成净少增缺口。</td></tr>
+            <tr><td>实际系数高于策略表</td><td class="num">3,598 人</td><td>同样需要审计线上策略版本和查表键。</td></tr>
+            <tr><td>提额后高于客户额度盖帽</td><td class="num negative">238 人（1.84%）</td><td>确认是否有未披露的例外规则或数据链路问题。</td></tr>
+            <tr><td>提额后高于单次提幅盖帽</td><td class="num negative">11 人（0.08%）</td><td>优先排查单次提幅计算与字段单位。</td></tr>
+            <tr><td>5 万方案范围内的 D/E 实际提额</td><td class="num negative">3,155 人（24.4%）</td><td>若“仅 A/B/C”是正式规则，属于需确认的策略例外。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cause" class="section">
+      <div class="section-head">
+        <div><div class="section-kicker">ROOT CAUSE</div><h2>整体平均额度未达到 5 万的四项直接原因</h2></div>
+        <span class="tag amber">按可行动性排序</span>
+      </div>
+      <div class="reason-grid">
+        <article class="reason"><div class="reason-index">01</div><h3>提额客群终态额度不足</h3><div class="metric">44,433 → 50,460 元</div><p>未提额客户不变时，已提额客户的终态均额还需增加 6,027 元，才能整体达到 5 万。</p></article>
+        <article class="reason amber"><div class="reason-index">02</div><h3>策略系数未稳定按表落地</h3><div class="metric">净少增约 2,207 万元</div><p>实际系数偏低客户虽然数量接近偏高客户，但集中在较高额度段，形成净金额缺口。</p></article>
+        <article class="reason amber"><div class="reason-index">03</div><h3>提额闸门覆盖有限</h3><div class="metric">14,650 人未提额</div><p>te_flag=0 客户中有正向配置系数但额度未变化，需补齐可解释的拦截原因码。</p></article>
+        <article class="reason blue"><div class="reason-index">04</div><h3>策略切换尚未完成</h3><div class="metric">19.7% 仍走旧策略</div><p>旧策略中 1,165 人发生降额、合计约 695 万元，进一步拉低混合口径的平均额度。</p></article>
+      </div>
+    </section>
+
+    <section id="actions" class="section">
+      <div class="section-head">
+        <div><div class="section-kicker">ACTION PLAN</div><h2>建议处理顺序</h2><p class="section-desc">先消除配置与计算的高影响不确定性，再补齐业务原因码和完成流量切换。</p></div>
+        <span class="tag blue">建议纳入日监控</span>
+      </div>
+      <div class="recommendations">
+        <article class="rec"><div class="priority">P0</div><div><h3>冻结并核对线上 315 格系数版本</h3><p>导出线上配置并与提额系数表逐格值比对；优先处理“实际系数偏低且额度权重高”的格子。</p></div></article>
+        <article class="rec"><div class="priority">P0</div><div><h3>补齐额度公式例外规则</h3><p>为 1,690 条回算不一致补充 limit_calc_reason；先处理 238 条越客户额度盖帽及 11 条越单次提幅盖帽。</p></div></article>
+        <article class="rec"><div class="priority">P0</div><div><h3>确认 5 万方案的正式客群范围</h3><p>若审批规则为“仅 A/B/C”，应停止或显式审批 D/E 的 3,155 条实际提额例外。</p></div></article>
+        <article class="rec"><div class="priority p1">P1</div><div><h3>拆解 te_flag=0 的业务原因</h3><p>重点下钻 14,650 条“正系数但未提额”，按资格、盖帽、输入异常、白名单例外等分类监控人数和金额。</p></div></article>
+        <article class="rec"><div class="priority p1">P1</div><div><h3>完成流量切换并统一时间口径</h3><p>新旧策略分流完成后，用完整自然日/同一业务窗口复评 5 万达成；确认 8/11 提前出现的新策略标签的灰度口径。</p></div></article>
+        <article class="rec"><div class="priority p2">P2</div><div><h3>补做成熟期风险效果后评估</h3><p>当前仅有首日额度结果；FPD7/FPD30 到期后按版本、系数一致性、风险等级分层复盘风险表现。</p></div></article>
+      </div>
+    </section>
+
+    <section id="scope" class="section">
+      <div class="section-head"><div><div class="section-kicker">SCOPE & METHOD</div><h2>口径、策略来源与使用边界</h2></div><span class="tag blue">可复现</span></div>
+      <div class="scope">
+        <div class="scope-box"><h3>数据与策略来源</h3><ul><li>跑批结果表：<code>pb_biz_credit.flexi_cash_jq_result_v1</code></li><li>业务日期：<code>jq_date=2026-08-12</code>；新策略：<code>str_type=new</code></li><li>字段字典：策略表和字典.csv</li><li>提幅映射：提额系数20260812.xlsx，共 315 个唯一策略格</li><li>金额字段按分转换为元后展示</li></ul></div>
+        <div class="scope-box"><h3>重要使用边界</h3><ul><li>5 万方案原测算底表约 225 万客户；本报告是首日 3.34 万结清样本的上线监控，不能替代全量复算。</li><li>“系数表一致 / 方案 A 幅度”均为同批次敏感性，用于定位缺口，不替代生产预测。</li><li>报表不含客户或借据级明细，仅展示聚合结果。</li><li>FPD7/FPD30 尚未成熟，风险结论需在表现期到期后补充。</li></ul></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">风控 BI 平台 · 提额策略上线监控 · 本报告为内部聚合分析快照</footer>
+</body>
+</html>

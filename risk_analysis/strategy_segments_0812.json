@@ -1,0 +1,425 @@
+{
+  "by_score_and_te_flag": [
+    {
+      "jq_mix_score_bin": "-1.0",
+      "te_flag": 0,
+      "cnt": 1,
+      "before_sum_cent": 22660000.0,
+      "after_sum_cent": 22660000.0,
+      "positive_rate_cnt": 0,
+      "avg_configured_rate": 0.0
+    },
+    {
+      "jq_mix_score_bin": "1.0",
+      "te_flag": 0,
+      "cnt": 4138,
+      "before_sum_cent": 8846505394.0,
+      "after_sum_cent": 8846505394.0,
+      "positive_rate_cnt": 2126,
+      "avg_configured_rate": 0.07916868052199
+    },
+    {
+      "jq_mix_score_bin": "1.0",
+      "te_flag": 1,
+      "cnt": 727,
+      "before_sum_cent": 1005686510.0,
+      "after_sum_cent": 1156855110.0,
+      "positive_rate_cnt": 727,
+      "avg_configured_rate": 0.13686382393397523
+    },
+    {
+      "jq_mix_score_bin": "2.0",
+      "te_flag": 0,
+      "cnt": 5819,
+      "before_sum_cent": 20410475492.0,
+      "after_sum_cent": 20410475492.0,
+      "positive_rate_cnt": 2646,
+      "avg_configured_rate": 0.08504897748754217
+    },
+    {
+      "jq_mix_score_bin": "2.0",
+      "te_flag": 1,
+      "cnt": 2428,
+      "before_sum_cent": 3187576160.0,
+      "after_sum_cent": 3874310760.0,
+      "positive_rate_cnt": 2370,
+      "avg_configured_rate": 0.19658154859967503
+    },
+    {
+      "jq_mix_score_bin": "3.0",
+      "te_flag": 0,
+      "cnt": 5175,
+      "before_sum_cent": 25209053427.0,
+      "after_sum_cent": 25209053427.0,
+      "positive_rate_cnt": 4988,
+      "avg_configured_rate": 0.3959323671497389
+    },
+    {
+      "jq_mix_score_bin": "3.0",
+      "te_flag": 1,
+      "cnt": 4156,
+      "before_sum_cent": 11444949130.0,
+      "after_sum_cent": 14412086577.0,
+      "positive_rate_cnt": 4154,
+      "avg_configured_rate": 0.343467276227138
+    },
+    {
+      "jq_mix_score_bin": "4.0",
+      "te_flag": 0,
+      "cnt": 3661,
+      "before_sum_cent": 29909805850.0,
+      "after_sum_cent": 29909805850.0,
+      "positive_rate_cnt": 3396,
+      "avg_configured_rate": 0.8491395793499094
+    },
+    {
+      "jq_mix_score_bin": "4.0",
+      "te_flag": 1,
+      "cnt": 3789,
+      "before_sum_cent": 14515841547.0,
+      "after_sum_cent": 19924029630.0,
+      "positive_rate_cnt": 3789,
+      "avg_configured_rate": 0.6995117445236215
+    },
+    {
+      "jq_mix_score_bin": "5.0",
+      "te_flag": 0,
+      "cnt": 1666,
+      "before_sum_cent": 17306053450.0,
+      "after_sum_cent": 17306053450.0,
+      "positive_rate_cnt": 1494,
+      "avg_configured_rate": 1.2247298919567802
+    },
+    {
+      "jq_mix_score_bin": "5.0",
+      "te_flag": 1,
+      "cnt": 1842,
+      "before_sum_cent": 12459573920.0,
+      "after_sum_cent": 18137728720.0,
+      "positive_rate_cnt": 1841,
+      "avg_configured_rate": 1.0314875135721961
+    }
+  ],
+  "by_customer_stage_and_te_flag": [
+    {
+      "cashloan_cid_mob_type": "1.0",
+      "te_flag": 0,
+      "cnt": 8266,
+      "before_sum_cent": 3641690000.0,
+      "after_sum_cent": 3641690000.0,
+      "positive_rate_cnt": 6537
+    },
+    {
+      "cashloan_cid_mob_type": "1.0",
+      "te_flag": 1,
+      "cnt": 3317,
+      "before_sum_cent": 1626435000.0,
+      "after_sum_cent": 2970215000.0,
+      "positive_rate_cnt": 3288
+    },
+    {
+      "cashloan_cid_mob_type": "2.0",
+      "te_flag": 0,
+      "cnt": 4293,
+      "before_sum_cent": 3393910000.0,
+      "after_sum_cent": 3393910000.0,
+      "positive_rate_cnt": 3048
+    },
+    {
+      "cashloan_cid_mob_type": "2.0",
+      "te_flag": 1,
+      "cnt": 3057,
+      "before_sum_cent": 2786253000.0,
+      "after_sum_cent": 4617073000.0,
+      "positive_rate_cnt": 3054
+    },
+    {
+      "cashloan_cid_mob_type": "3.0",
+      "te_flag": 0,
+      "cnt": 7901,
+      "before_sum_cent": 94668953613.0,
+      "after_sum_cent": 94668953613.0,
+      "positive_rate_cnt": 5065
+    },
+    {
+      "cashloan_cid_mob_type": "3.0",
+      "te_flag": 1,
+      "cnt": 6568,
+      "before_sum_cent": 38200939267.0,
+      "after_sum_cent": 49917722797.0,
+      "positive_rate_cnt": 6539
+    }
+  ],
+  "te0_positive_config_by_score": [
+    {
+      "jq_mix_score_bin": "1.0",
+      "cnt": 2126,
+      "before_sum_cent": 4973337994.0,
+      "avg_configured_rate": 0.15409219190968704
+    },
+    {
+      "jq_mix_score_bin": "2.0",
+      "cnt": 2646,
+      "before_sum_cent": 11908201487.0,
+      "avg_configured_rate": 0.18703703703704003
+    },
+    {
+      "jq_mix_score_bin": "3.0",
+      "cnt": 4988,
+      "before_sum_cent": 22370820412.0,
+      "avg_configured_rate": 0.41077586206894523
+    },
+    {
+      "jq_mix_score_bin": "4.0",
+      "cnt": 3396,
+      "before_sum_cent": 23796727050.0,
+      "avg_configured_rate": 0.9154004711425259
+    },
+    {
+      "jq_mix_score_bin": "5.0",
+      "cnt": 1494,
+      "before_sum_cent": 13914393050.0,
+      "avg_configured_rate": 1.3657295850066906
+    }
+  ],
+  "rate_and_te_flag": [
+    {
+      "cash_remark1": "0.0",
+      "te_flag": 0,
+      "cnt": 5810,
+      "before_sum_cent": 24741073620.0,
+      "after_sum_cent": 24741073620.0
+    },
+    {
+      "cash_remark1": "0.1",
+      "te_flag": 0,
+      "cnt": 2723,
+      "before_sum_cent": 25651886081.0,
+      "after_sum_cent": 25651886081.0
+    },
+    {
+      "cash_remark1": "0.15",
+      "te_flag": 0,
+      "cnt": 224,
+      "before_sum_cent": 8393602200.0,
+      "after_sum_cent": 8393602200.0
+    },
+    {
+      "cash_remark1": "0.2",
+      "te_flag": 0,
+      "cnt": 3246,
+      "before_sum_cent": 16716011125.0,
+      "after_sum_cent": 16716011125.0
+    },
+    {
+      "cash_remark1": "0.25",
+      "te_flag": 0,
+      "cnt": 7,
+      "before_sum_cent": 178685000.0,
+      "after_sum_cent": 178685000.0
+    },
+    {
+      "cash_remark1": "0.3",
+      "te_flag": 0,
+      "cnt": 2328,
+      "before_sum_cent": 13788944950.0,
+      "after_sum_cent": 13788944950.0
+    },
+    {
+      "cash_remark1": "0.4",
+      "te_flag": 0,
+      "cnt": 357,
+      "before_sum_cent": 5159074425.0,
+      "after_sum_cent": 5159074425.0
+    },
+    {
+      "cash_remark1": "0.5",
+      "te_flag": 0,
+      "cnt": 400,
+      "before_sum_cent": 2787329750.0,
+      "after_sum_cent": 2787329750.0
+    },
+    {
+      "cash_remark1": "0.6",
+      "te_flag": 0,
+      "cnt": 1600,
+      "before_sum_cent": 1820904962.0,
+      "after_sum_cent": 1820904962.0
+    },
+    {
+      "cash_remark1": "0.7",
+      "te_flag": 0,
+      "cnt": 6,
+      "before_sum_cent": 14980000.0,
+      "after_sum_cent": 14980000.0
+    },
+    {
+      "cash_remark1": "0.8",
+      "te_flag": 0,
+      "cnt": 854,
+      "before_sum_cent": 1057581500.0,
+      "after_sum_cent": 1057581500.0
+    },
+    {
+      "cash_remark1": "1.0",
+      "te_flag": 0,
+      "cnt": 1258,
+      "before_sum_cent": 658970000.0,
+      "after_sum_cent": 658970000.0
+    },
+    {
+      "cash_remark1": "1.2",
+      "te_flag": 0,
+      "cnt": 198,
+      "before_sum_cent": 103055000.0,
+      "after_sum_cent": 103055000.0
+    },
+    {
+      "cash_remark1": "1.5",
+      "te_flag": 0,
+      "cnt": 361,
+      "before_sum_cent": 190430000.0,
+      "after_sum_cent": 190430000.0
+    },
+    {
+      "cash_remark1": "2.0",
+      "te_flag": 0,
+      "cnt": 898,
+      "before_sum_cent": 367615000.0,
+      "after_sum_cent": 367615000.0
+    },
+    {
+      "cash_remark1": "2.5",
+      "te_flag": 0,
+      "cnt": 56,
+      "before_sum_cent": 25350000.0,
+      "after_sum_cent": 25350000.0
+    },
+    {
+      "cash_remark1": "3.0",
+      "te_flag": 0,
+      "cnt": 134,
+      "before_sum_cent": 49060000.0,
+      "after_sum_cent": 49060000.0
+    },
+    {
+      "cash_remark1": "0.0",
+      "te_flag": 1,
+      "cnt": 61,
+      "before_sum_cent": 48388600.0,
+      "after_sum_cent": 118812000.0
+    },
+    {
+      "cash_remark1": "0.1",
+      "te_flag": 1,
+      "cnt": 2201,
+      "before_sum_cent": 7810269570.0,
+      "after_sum_cent": 8782422795.0
+    },
+    {
+      "cash_remark1": "0.15",
+      "te_flag": 1,
+      "cnt": 105,
+      "before_sum_cent": 1479808200.0,
+      "after_sum_cent": 1702258200.0
+    },
+    {
+      "cash_remark1": "0.2",
+      "te_flag": 1,
+      "cnt": 2355,
+      "before_sum_cent": 9299529525.0,
+      "after_sum_cent": 11272245750.0
+    },
+    {
+      "cash_remark1": "0.25",
+      "te_flag": 1,
+      "cnt": 3,
+      "before_sum_cent": 23370000.0,
+      "after_sum_cent": 29220000.0
+    },
+    {
+      "cash_remark1": "0.3",
+      "te_flag": 1,
+      "cnt": 2150,
+      "before_sum_cent": 8149414839.0,
+      "after_sum_cent": 10621567180.0
+    },
+    {
+      "cash_remark1": "0.4",
+      "te_flag": 1,
+      "cnt": 780,
+      "before_sum_cent": 5401025486.0,
+      "after_sum_cent": 7564300000.0
+    },
+    {
+      "cash_remark1": "0.5",
+      "te_flag": 1,
+      "cnt": 611,
+      "before_sum_cent": 3494576952.0,
+      "after_sum_cent": 5119410752.0
+    },
+    {
+      "cash_remark1": "0.6",
+      "te_flag": 1,
+      "cnt": 1522,
+      "before_sum_cent": 3201272795.0,
+      "after_sum_cent": 5016272820.0
+    },
+    {
+      "cash_remark1": "0.7",
+      "te_flag": 1,
+      "cnt": 41,
+      "before_sum_cent": 112330000.0,
+      "after_sum_cent": 192190000.0
+    },
+    {
+      "cash_remark1": "0.8",
+      "te_flag": 1,
+      "cnt": 847,
+      "before_sum_cent": 1990979900.0,
+      "after_sum_cent": 3451419900.0
+    },
+    {
+      "cash_remark1": "1.0",
+      "te_flag": 1,
+      "cnt": 1222,
+      "before_sum_cent": 872578400.0,
+      "after_sum_cent": 1747178400.0
+    },
+    {
+      "cash_remark1": "1.2",
+      "te_flag": 1,
+      "cnt": 338,
+      "before_sum_cent": 250965000.0,
+      "after_sum_cent": 553695000.0
+    },
+    {
+      "cash_remark1": "1.5",
+      "te_flag": 1,
+      "cnt": 234,
+      "before_sum_cent": 164140000.0,
+      "after_sum_cent": 399490000.0
+    },
+    {
+      "cash_remark1": "2.0",
+      "te_flag": 1,
+      "cnt": 393,
+      "before_sum_cent": 259888000.0,
+      "after_sum_cent": 742428000.0
+    },
+    {
+      "cash_remark1": "2.5",
+      "te_flag": 1,
+      "cnt": 73,
+      "before_sum_cent": 49510000.0,
+      "after_sum_cent": 169780000.0
+    },
+    {
+      "cash_remark1": "3.0",
+      "te_flag": 1,
+      "cnt": 6,
+      "before_sum_cent": 5580000.0,
+      "after_sum_cent": 22320000.0
+    }
+  ]
+}

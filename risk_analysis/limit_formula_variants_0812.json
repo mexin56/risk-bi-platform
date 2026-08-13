@@ -1,0 +1,107 @@
+{
+  "summary": [
+    {
+      "eligible_cnt": 12942,
+      "hard_cap_match_cnt": 11252,
+      "no_total_cap_match_cnt": 11461,
+      "grandfather_cap_match_cnt": 11252,
+      "pure_rate_match_cnt": 11284,
+      "increase_cap_match_cnt": 220,
+      "total_cap_match_cnt": 4,
+      "pre_at_or_above_total_cap_cnt": 0,
+      "after_above_total_cap_cnt": 238,
+      "after_above_increase_cap_cnt": 11,
+      "down_limit_cnt": 0
+    }
+  ],
+  "classes": [
+    {
+      "result_class": "A_hard_cap_exact",
+      "cnt": 11252,
+      "avg_before_limit": 2932436.40419481,
+      "avg_after_limit": 3983885.924280128,
+      "avg_change": 1051449.5200853182,
+      "min_gap_vs_hard_cap": 0.0,
+      "max_gap_vs_hard_cap": 0.0
+    },
+    {
+      "result_class": "G_other_raise_mismatch",
+      "cnt": 1412,
+      "avg_before_limit": 2675146.1026912183,
+      "avg_after_limit": 3611266.077903683,
+      "avg_change": 936119.9752124646,
+      "min_gap_vs_hard_cap": -3590000.0,
+      "max_gap_vs_hard_cap": 6840000.0
+    },
+    {
+      "result_class": "C_pure_rate_only",
+      "cnt": 143,
+      "avg_before_limit": 21853006.993006993,
+      "avg_after_limit": 26950769.230769232,
+      "avg_change": 5097762.237762238,
+      "min_gap_vs_hard_cap": 10000.0,
+      "max_gap_vs_hard_cap": 9420000.0
+    },
+    {
+      "result_class": "D_single_increase_cap_only",
+      "cnt": 99,
+      "avg_before_limit": 22537393.686868686,
+      "avg_after_limit": 30416181.565656565,
+      "avg_change": 7878787.878787879,
+      "min_gap_vs_hard_cap": 318100.0,
+      "max_gap_vs_hard_cap": 11885000.0
+    },
+    {
+      "result_class": "E_above_total_cap",
+      "cnt": 29,
+      "avg_before_limit": 16374640.51724138,
+      "avg_after_limit": 21760575.862068966,
+      "avg_change": 5385935.344827586,
+      "min_gap_vs_hard_cap": 29000.0,
+      "max_gap_vs_hard_cap": 10970000.0
+    },
+    {
+      "result_class": "F_above_single_increase_cap",
+      "cnt": 7,
+      "avg_before_limit": 1357142.857142857,
+      "avg_after_limit": 11857142.857142856,
+      "avg_change": 10500000.0,
+      "min_gap_vs_hard_cap": 7310000.0,
+      "max_gap_vs_hard_cap": 16800000.0
+    }
+  ],
+  "cap_cross": [
+    {
+      "total_cap_status": "pre<total_cap",
+      "after_total_status": "after<=total_cap",
+      "increase_cap_status": "after<=pre+single_cap",
+      "cnt": 12697,
+      "avg_before_limit": 2903570.953138537,
+      "avg_after_limit": 3946156.7139481767
+    },
+    {
+      "total_cap_status": "pre<total_cap",
+      "after_total_status": "after>total_cap",
+      "increase_cap_status": "after<=pre+single_cap",
+      "cnt": 234,
+      "avg_before_limit": 24464046.474358976,
+      "avg_after_limit": 31051320.512820512
+    },
+    {
+      "total_cap_status": "pre<total_cap",
+      "after_total_status": "after<=total_cap",
+      "increase_cap_status": "after>pre+single_cap",
+      "cnt": 7,
+      "avg_before_limit": 1357142.857142857,
+      "avg_after_limit": 11857142.857142856
+    },
+    {
+      "total_cap_status": "pre<total_cap",
+      "after_total_status": "after>total_cap",
+      "increase_cap_status": "after>pre+single_cap",
+      "cnt": 4,
+      "avg_before_limit": 3225000.0,
+      "avg_after_limit": 12912500.0
+    }
+  ]
+}

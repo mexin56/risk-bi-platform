@@ -1,0 +1,772 @@
+{
+  "new_by_jq_date": [
+    {
+      "jq_date": "2026-08-11",
+      "cnt": 33827,
+      "min_jq_time": "2026-08-11 11:30:32",
+      "max_jq_time": "2026-08-12 06:59:54"
+    },
+    {
+      "jq_date": "2026-08-12",
+      "cnt": 33407,
+      "min_jq_time": "2026-08-12 07:00:06",
+      "max_jq_time": "2026-08-13 05:59:59"
+    }
+  ],
+  "by_run_day_hour": [
+    {
+      "run_hour": "2026-08-11 00",
+      "str_type": "old",
+      "cnt": 2520
+    },
+    {
+      "run_hour": "2026-08-11 00",
+      "str_type": "other",
+      "cnt": 17
+    },
+    {
+      "run_hour": "2026-08-11 01",
+      "str_type": "old",
+      "cnt": 2408
+    },
+    {
+      "run_hour": "2026-08-11 01",
+      "str_type": "other",
+      "cnt": 14
+    },
+    {
+      "run_hour": "2026-08-11 02",
+      "str_type": "old",
+      "cnt": 2627
+    },
+    {
+      "run_hour": "2026-08-11 02",
+      "str_type": "other",
+      "cnt": 11
+    },
+    {
+      "run_hour": "2026-08-11 03",
+      "str_type": "old",
+      "cnt": 2411
+    },
+    {
+      "run_hour": "2026-08-11 03",
+      "str_type": "other",
+      "cnt": 9
+    },
+    {
+      "run_hour": "2026-08-11 04",
+      "str_type": "old",
+      "cnt": 2105
+    },
+    {
+      "run_hour": "2026-08-11 04",
+      "str_type": "other",
+      "cnt": 15
+    },
+    {
+      "run_hour": "2026-08-11 05",
+      "str_type": "old",
+      "cnt": 1578
+    },
+    {
+      "run_hour": "2026-08-11 05",
+      "str_type": "other",
+      "cnt": 9
+    },
+    {
+      "run_hour": "2026-08-11 06",
+      "str_type": "old",
+      "cnt": 1030
+    },
+    {
+      "run_hour": "2026-08-11 06",
+      "str_type": "other",
+      "cnt": 6
+    },
+    {
+      "run_hour": "2026-08-11 07",
+      "str_type": "old",
+      "cnt": 856
+    },
+    {
+      "run_hour": "2026-08-11 07",
+      "str_type": "other",
+      "cnt": 4
+    },
+    {
+      "run_hour": "2026-08-11 08",
+      "str_type": "old",
+      "cnt": 509
+    },
+    {
+      "run_hour": "2026-08-11 08",
+      "str_type": "other",
+      "cnt": 3
+    },
+    {
+      "run_hour": "2026-08-11 09",
+      "str_type": "old",
+      "cnt": 349
+    },
+    {
+      "run_hour": "2026-08-11 09",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-11 10",
+      "str_type": "old",
+      "cnt": 280
+    },
+    {
+      "run_hour": "2026-08-11 10",
+      "str_type": "other",
+      "cnt": 3
+    },
+    {
+      "run_hour": "2026-08-11 11",
+      "str_type": "new",
+      "cnt": 113
+    },
+    {
+      "run_hour": "2026-08-11 11",
+      "str_type": "old",
+      "cnt": 172
+    },
+    {
+      "run_hour": "2026-08-11 12",
+      "str_type": "new",
+      "cnt": 355
+    },
+    {
+      "run_hour": "2026-08-11 12",
+      "str_type": "old",
+      "cnt": 90
+    },
+    {
+      "run_hour": "2026-08-11 13",
+      "str_type": "new",
+      "cnt": 758
+    },
+    {
+      "run_hour": "2026-08-11 13",
+      "str_type": "old",
+      "cnt": 172
+    },
+    {
+      "run_hour": "2026-08-11 13",
+      "str_type": "other",
+      "cnt": 1
+    },
+    {
+      "run_hour": "2026-08-11 14",
+      "str_type": "new",
+      "cnt": 1593
+    },
+    {
+      "run_hour": "2026-08-11 14",
+      "str_type": "old",
+      "cnt": 416
+    },
+    {
+      "run_hour": "2026-08-11 14",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-11 15",
+      "str_type": "new",
+      "cnt": 1973
+    },
+    {
+      "run_hour": "2026-08-11 15",
+      "str_type": "old",
+      "cnt": 464
+    },
+    {
+      "run_hour": "2026-08-11 15",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-11 16",
+      "str_type": "new",
+      "cnt": 2243
+    },
+    {
+      "run_hour": "2026-08-11 16",
+      "str_type": "old",
+      "cnt": 564
+    },
+    {
+      "run_hour": "2026-08-11 16",
+      "str_type": "other",
+      "cnt": 8
+    },
+    {
+      "run_hour": "2026-08-11 17",
+      "str_type": "new",
+      "cnt": 2212
+    },
+    {
+      "run_hour": "2026-08-11 17",
+      "str_type": "old",
+      "cnt": 522
+    },
+    {
+      "run_hour": "2026-08-11 17",
+      "str_type": "other",
+      "cnt": 16
+    },
+    {
+      "run_hour": "2026-08-11 18",
+      "str_type": "new",
+      "cnt": 2687
+    },
+    {
+      "run_hour": "2026-08-11 18",
+      "str_type": "old",
+      "cnt": 642
+    },
+    {
+      "run_hour": "2026-08-11 18",
+      "str_type": "other",
+      "cnt": 16
+    },
+    {
+      "run_hour": "2026-08-11 19",
+      "str_type": "new",
+      "cnt": 2248
+    },
+    {
+      "run_hour": "2026-08-11 19",
+      "str_type": "old",
+      "cnt": 554
+    },
+    {
+      "run_hour": "2026-08-11 19",
+      "str_type": "other",
+      "cnt": 10
+    },
+    {
+      "run_hour": "2026-08-11 20",
+      "str_type": "new",
+      "cnt": 2227
+    },
+    {
+      "run_hour": "2026-08-11 20",
+      "str_type": "old",
+      "cnt": 543
+    },
+    {
+      "run_hour": "2026-08-11 20",
+      "str_type": "other",
+      "cnt": 20
+    },
+    {
+      "run_hour": "2026-08-11 21",
+      "str_type": "new",
+      "cnt": 2205
+    },
+    {
+      "run_hour": "2026-08-11 21",
+      "str_type": "old",
+      "cnt": 518
+    },
+    {
+      "run_hour": "2026-08-11 21",
+      "str_type": "other",
+      "cnt": 15
+    },
+    {
+      "run_hour": "2026-08-11 22",
+      "str_type": "new",
+      "cnt": 2007
+    },
+    {
+      "run_hour": "2026-08-11 22",
+      "str_type": "old",
+      "cnt": 473
+    },
+    {
+      "run_hour": "2026-08-11 22",
+      "str_type": "other",
+      "cnt": 12
+    },
+    {
+      "run_hour": "2026-08-11 23",
+      "str_type": "new",
+      "cnt": 1894
+    },
+    {
+      "run_hour": "2026-08-11 23",
+      "str_type": "old",
+      "cnt": 465
+    },
+    {
+      "run_hour": "2026-08-11 23",
+      "str_type": "other",
+      "cnt": 13
+    },
+    {
+      "run_hour": "2026-08-12 00",
+      "str_type": "new",
+      "cnt": 1802
+    },
+    {
+      "run_hour": "2026-08-12 00",
+      "str_type": "old",
+      "cnt": 427
+    },
+    {
+      "run_hour": "2026-08-12 00",
+      "str_type": "other",
+      "cnt": 13
+    },
+    {
+      "run_hour": "2026-08-12 01",
+      "str_type": "new",
+      "cnt": 1906
+    },
+    {
+      "run_hour": "2026-08-12 01",
+      "str_type": "old",
+      "cnt": 450
+    },
+    {
+      "run_hour": "2026-08-12 01",
+      "str_type": "other",
+      "cnt": 8
+    },
+    {
+      "run_hour": "2026-08-12 02",
+      "str_type": "new",
+      "cnt": 2027
+    },
+    {
+      "run_hour": "2026-08-12 02",
+      "str_type": "old",
+      "cnt": 476
+    },
+    {
+      "run_hour": "2026-08-12 02",
+      "str_type": "other",
+      "cnt": 10
+    },
+    {
+      "run_hour": "2026-08-12 03",
+      "str_type": "new",
+      "cnt": 1904
+    },
+    {
+      "run_hour": "2026-08-12 03",
+      "str_type": "old",
+      "cnt": 458
+    },
+    {
+      "run_hour": "2026-08-12 03",
+      "str_type": "other",
+      "cnt": 14
+    },
+    {
+      "run_hour": "2026-08-12 04",
+      "str_type": "new",
+      "cnt": 1663
+    },
+    {
+      "run_hour": "2026-08-12 04",
+      "str_type": "old",
+      "cnt": 393
+    },
+    {
+      "run_hour": "2026-08-12 04",
+      "str_type": "other",
+      "cnt": 12
+    },
+    {
+      "run_hour": "2026-08-12 05",
+      "str_type": "new",
+      "cnt": 1229
+    },
+    {
+      "run_hour": "2026-08-12 05",
+      "str_type": "old",
+      "cnt": 317
+    },
+    {
+      "run_hour": "2026-08-12 05",
+      "str_type": "other",
+      "cnt": 12
+    },
+    {
+      "run_hour": "2026-08-12 06",
+      "str_type": "new",
+      "cnt": 781
+    },
+    {
+      "run_hour": "2026-08-12 06",
+      "str_type": "old",
+      "cnt": 185
+    },
+    {
+      "run_hour": "2026-08-12 06",
+      "str_type": "other",
+      "cnt": 3
+    },
+    {
+      "run_hour": "2026-08-12 07",
+      "str_type": "new",
+      "cnt": 615
+    },
+    {
+      "run_hour": "2026-08-12 07",
+      "str_type": "old",
+      "cnt": 152
+    },
+    {
+      "run_hour": "2026-08-12 07",
+      "str_type": "other",
+      "cnt": 4
+    },
+    {
+      "run_hour": "2026-08-12 08",
+      "str_type": "new",
+      "cnt": 391
+    },
+    {
+      "run_hour": "2026-08-12 08",
+      "str_type": "old",
+      "cnt": 75
+    },
+    {
+      "run_hour": "2026-08-12 08",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-12 09",
+      "str_type": "new",
+      "cnt": 262
+    },
+    {
+      "run_hour": "2026-08-12 09",
+      "str_type": "old",
+      "cnt": 57
+    },
+    {
+      "run_hour": "2026-08-12 09",
+      "str_type": "other",
+      "cnt": 4
+    },
+    {
+      "run_hour": "2026-08-12 10",
+      "str_type": "new",
+      "cnt": 235
+    },
+    {
+      "run_hour": "2026-08-12 10",
+      "str_type": "old",
+      "cnt": 49
+    },
+    {
+      "run_hour": "2026-08-12 10",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-12 11",
+      "str_type": "new",
+      "cnt": 269
+    },
+    {
+      "run_hour": "2026-08-12 11",
+      "str_type": "old",
+      "cnt": 57
+    },
+    {
+      "run_hour": "2026-08-12 11",
+      "str_type": "other",
+      "cnt": 2
+    },
+    {
+      "run_hour": "2026-08-12 12",
+      "str_type": "new",
+      "cnt": 377
+    },
+    {
+      "run_hour": "2026-08-12 12",
+      "str_type": "old",
+      "cnt": 93
+    },
+    {
+      "run_hour": "2026-08-12 12",
+      "str_type": "other",
+      "cnt": 4
+    },
+    {
+      "run_hour": "2026-08-12 13",
+      "str_type": "new",
+      "cnt": 752
+    },
+    {
+      "run_hour": "2026-08-12 13",
+      "str_type": "old",
+      "cnt": 205
+    },
+    {
+      "run_hour": "2026-08-12 13",
+      "str_type": "other",
+      "cnt": 6
+    },
+    {
+      "run_hour": "2026-08-12 14",
+      "str_type": "new",
+      "cnt": 1569
+    },
+    {
+      "run_hour": "2026-08-12 14",
+      "str_type": "old",
+      "cnt": 393
+    },
+    {
+      "run_hour": "2026-08-12 14",
+      "str_type": "other",
+      "cnt": 17
+    },
+    {
+      "run_hour": "2026-08-12 15",
+      "str_type": "new",
+      "cnt": 1870
+    },
+    {
+      "run_hour": "2026-08-12 15",
+      "str_type": "old",
+      "cnt": 414
+    },
+    {
+      "run_hour": "2026-08-12 15",
+      "str_type": "other",
+      "cnt": 10
+    },
+    {
+      "run_hour": "2026-08-12 16",
+      "str_type": "new",
+      "cnt": 2262
+    },
+    {
+      "run_hour": "2026-08-12 16",
+      "str_type": "old",
+      "cnt": 516
+    },
+    {
+      "run_hour": "2026-08-12 16",
+      "str_type": "other",
+      "cnt": 16
+    },
+    {
+      "run_hour": "2026-08-12 17",
+      "str_type": "new",
+      "cnt": 2281
+    },
+    {
+      "run_hour": "2026-08-12 17",
+      "str_type": "old",
+      "cnt": 512
+    },
+    {
+      "run_hour": "2026-08-12 17",
+      "str_type": "other",
+      "cnt": 19
+    },
+    {
+      "run_hour": "2026-08-12 18",
+      "str_type": "new",
+      "cnt": 2591
+    },
+    {
+      "run_hour": "2026-08-12 18",
+      "str_type": "old",
+      "cnt": 597
+    },
+    {
+      "run_hour": "2026-08-12 18",
+      "str_type": "other",
+      "cnt": 19
+    },
+    {
+      "run_hour": "2026-08-12 19",
+      "str_type": "new",
+      "cnt": 2068
+    },
+    {
+      "run_hour": "2026-08-12 19",
+      "str_type": "old",
+      "cnt": 514
+    },
+    {
+      "run_hour": "2026-08-12 19",
+      "str_type": "other",
+      "cnt": 14
+    },
+    {
+      "run_hour": "2026-08-12 20",
+      "str_type": "new",
+      "cnt": 2014
+    },
+    {
+      "run_hour": "2026-08-12 20",
+      "str_type": "old",
+      "cnt": 503
+    },
+    {
+      "run_hour": "2026-08-12 20",
+      "str_type": "other",
+      "cnt": 15
+    },
+    {
+      "run_hour": "2026-08-12 21",
+      "str_type": "new",
+      "cnt": 2055
+    },
+    {
+      "run_hour": "2026-08-12 21",
+      "str_type": "old",
+      "cnt": 534
+    },
+    {
+      "run_hour": "2026-08-12 21",
+      "str_type": "other",
+      "cnt": 19
+    },
+    {
+      "run_hour": "2026-08-12 22",
+      "str_type": "new",
+      "cnt": 1820
+    },
+    {
+      "run_hour": "2026-08-12 22",
+      "str_type": "old",
+      "cnt": 457
+    },
+    {
+      "run_hour": "2026-08-12 22",
+      "str_type": "other",
+      "cnt": 13
+    },
+    {
+      "run_hour": "2026-08-12 23",
+      "str_type": "new",
+      "cnt": 1773
+    },
+    {
+      "run_hour": "2026-08-12 23",
+      "str_type": "old",
+      "cnt": 457
+    },
+    {
+      "run_hour": "2026-08-12 23",
+      "str_type": "other",
+      "cnt": 16
+    },
+    {
+      "run_hour": "2026-08-13 00",
+      "str_type": "new",
+      "cnt": 1725
+    },
+    {
+      "run_hour": "2026-08-13 00",
+      "str_type": "old",
+      "cnt": 468
+    },
+    {
+      "run_hour": "2026-08-13 00",
+      "str_type": "other",
+      "cnt": 8
+    },
+    {
+      "run_hour": "2026-08-13 01",
+      "str_type": "new",
+      "cnt": 1753
+    },
+    {
+      "run_hour": "2026-08-13 01",
+      "str_type": "old",
+      "cnt": 504
+    },
+    {
+      "run_hour": "2026-08-13 01",
+      "str_type": "other",
+      "cnt": 10
+    },
+    {
+      "run_hour": "2026-08-13 02",
+      "str_type": "new",
+      "cnt": 1986
+    },
+    {
+      "run_hour": "2026-08-13 02",
+      "str_type": "old",
+      "cnt": 472
+    },
+    {
+      "run_hour": "2026-08-13 02",
+      "str_type": "other",
+      "cnt": 17
+    },
+    {
+      "run_hour": "2026-08-13 03",
+      "str_type": "new",
+      "cnt": 1854
+    },
+    {
+      "run_hour": "2026-08-13 03",
+      "str_type": "old",
+      "cnt": 491
+    },
+    {
+      "run_hour": "2026-08-13 03",
+      "str_type": "other",
+      "cnt": 11
+    },
+    {
+      "run_hour": "2026-08-13 04",
+      "str_type": "new",
+      "cnt": 1597
+    },
+    {
+      "run_hour": "2026-08-13 04",
+      "str_type": "old",
+      "cnt": 436
+    },
+    {
+      "run_hour": "2026-08-13 04",
+      "str_type": "other",
+      "cnt": 8
+    },
+    {
+      "run_hour": "2026-08-13 05",
+      "str_type": "new",
+      "cnt": 1288
+    },
+    {
+      "run_hour": "2026-08-13 05",
+      "str_type": "old",
+      "cnt": 292
+    },
+    {
+      "run_hour": "2026-08-13 05",
+      "str_type": "other",
+      "cnt": 9
+    }
+  ],
+  "new_overall": [
+    {
+      "cnt": 67234,
+      "min_jq_time": "2026-08-11 11:30:32",
+      "max_jq_time": "2026-08-13 05:59:59",
+      "min_jq_date": "2026-08-11",
+      "max_jq_date": "2026-08-12"
+    }
+  ]
+}
