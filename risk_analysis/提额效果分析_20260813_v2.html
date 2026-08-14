@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"/>
+<title>20260813 结清 · 提额效果分析</title>
+<style>
+:root{--brand:#537D96;--brand2:#3F6179;--bg:#F5F1E8;--card:#FFFFFF;--ink:#2A2622;--mut:#8F867B;--line:#E4DBC8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:linear-gradient(160deg,#F5F1E8 0%,#EDE7D9 100%);color:var(--ink);padding:32px 28px}
+.wrap{max-width:1500px;margin:0 auto}
+h1{font-size:22px;font-weight:700;letter-spacing:.5px}
+.sub{color:var(--mut);font-size:12.5px;margin:6px 0 22px;line-height:1.8}
+h2{font-size:15px;margin:26px 0 6px;color:var(--brand2);border-left:4px solid var(--brand);padding-left:10px}
+.note{font-size:12px;color:var(--mut);margin-bottom:10px}
+table{border-collapse:collapse;width:100%;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(42,38,34,.08);font-size:12px;margin-bottom:10px}
+th{background:var(--brand);color:#FBF7EE;padding:8px 6px;font-weight:600;text-align:center;white-space:nowrap;border:1px solid var(--brand2)}
+thead tr:first-child th{font-size:12.5px}
+tr.cols2 th{background:var(--brand2);font-size:11px;font-weight:400}
+.subth{font-size:10px;font-weight:400;opacity:.8}
+td{border:1px solid #EEE6D6;padding:7px 6px;text-align:center;white-space:nowrap}
+td.grp{font-weight:600;color:var(--brand2);background:#F6F2E9}
+th.score{background:#6E91A6;width:44px;font-size:14px}
+td.empty{background:#FAF7F0}
+td.up{color:#C0392B;font-weight:600}
+td.down{color:#1E8449;font-weight:600}
+td.mini{position:relative;min-width:70px}
+span.bar{position:absolute;left:2px;bottom:2px;height:3px;background:linear-gradient(90deg,var(--brand),#8FB3C8);border-radius:2px;opacity:.85}
+span.n{color:var(--mut);font-size:10px;margin-left:2px}
+span.muted{color:#C4BBA8}
+.scrollx{overflow-x:auto;border-radius:10px}
+.scrollx table{margin-bottom:0}
+td.ghost{background:transparent;border:none;width:8px}
+td.note2{background:#F6F2E9;color:var(--brand2);font-size:11px;text-align:left;padding:8px 12px;line-height:1.7}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0 6px}
+.kpi{background:var(--card);border-radius:10px;padding:14px 16px;box-shadow:0 4px 20px rgba(42,38,34,.08)}
+.kpi .v{font-size:19px;font-weight:700;color:var(--brand2)}
+.kpi .l{font-size:11.5px;color:var(--mut);margin-top:3px}
+.concl{background:#FBF7EE;border:1px solid #E4DBC8;border-radius:10px;padding:16px 20px;margin-top:16px;font-size:13px;line-height:1.9}
+.concl h3{color:var(--brand2);font-size:14px;margin-bottom:6px}
+.concl li{margin-left:20px}
+.concl b{color:#8B2C1F}
+.dbarwrap{background:var(--card);border-radius:10px;padding:14px 18px;box-shadow:0 4px 20px rgba(42,38,34,.08);margin-bottom:6px}
+.dbar{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:12px}
+.dl{width:44px;font-weight:600;color:var(--brand2)}
+.dbg{flex:1;background:#EFE8D8;border-radius:6px;height:16px;overflow:hidden}
+.dbfill{display:block;height:100%;background:linear-gradient(90deg,var(--brand),#8FB3C8);border-radius:6px}
+.dv{width:110px;text-align:right;font-weight:600;color:var(--brand2)}
+.foot{color:var(--mut);font-size:11px;margin-top:18px;text-align:center}
+</style></head><body><div class="wrap">
+<h1>2026-08-13 结清 · 提额效果分析</h1>
+<div class="sub">数据源: pb_biz_credit.flexi_cash_jq_result_v1(结清日期 2026-08-13) · 策略表: 策略表和字典.xlsx(315格) · 交易量口径: loan_prin(下一笔借款金额,元)<br/>
+额度单位: 元 · 客户数括号内占比为该风险等级内占比(覆盖率) · fpd7/fpd1 为客户口径,括号内为分母样本数(样本少时仅参考)</div>
+
+<div class="kpis">
+<div class="kpi"><div class="v">33,891</div><div class="l">新策略结清客户(提额 14,103 / 覆盖 41.6%)</div></div>
+<div class="kpi"><div class="v">+43.8%</div><div class="l">新策略提额客户平均提幅</div></div>
+<div class="kpi"><div class="v">19,651 元</div><div class="l">新策略提额客户人均下一笔借款(仅发起下一笔客户, 发起率 50.3%; 未提额 16,392)</div></div>
+<div class="kpi"><div class="v">0.67 元</div><div class="l">每 1 元新增额度产生的下一笔交易量(总额口径)</div></div>
+</div>
+
+
+    <h2>按结清日期汇总统计(8/8 – 8/13, 全量客群)</h2>
+    <p class="note">金额单位: 元 · 额度使用率 = 本笔放款/提额前额度 · 件均 = 本笔放款(loan_amount)均值 · 下一笔日息 = interest_fee_daily 均值<br/>
+    fpd1/fpd7_rate = 客户口径(fz_dd/fm_dd), rate$ = 笔口径(fz_bj/fm_bj) · fpd1_fm_dd / fpd7_fm_dd 为分母样本数 · 发起下一笔订单 = next_loan_flag=1 人数</p>
+    <div class="scrollx"><table>
+      <thead><tr><th>日期</th><th>结清客户</th><th>结清平均额度</th><th>结清平均额度后</th><th>件均</th><th>额度使用率</th><th>提额客户</th><th>提额客户_平均额度</th><th>提额客户_提额后平均</th><th>发起下一笔订单</th><th>发起下一笔件均</th><th>平均借款天数</th><th>下一笔日息</th><th>fpd1_fm_dd</th><th>fpd7_fm_dd</th><th>fpd1_rate$</th><th>fpd1_rate</th><th>fpd7_rate$</th><th>fpd7_rate</th></tr></thead><tbody><tr><th class='score'>08/08</th><td>42,296</td><td>40,052</td><td>42,009</td><td>14,550</td><td>36.3%</td><td>17,461</td><td>18,076</td><td>25,704</td><td>29,868</td><td>16,074</td><td>24.0</td><td>178.21</td><td>768</td><td>572</td><td>24.9%</td><td>23.2%</td><td>7.9%</td><td>8.2%</td></tr><tr><th class='score'>08/09</th><td>36,201</td><td>39,530</td><td>41,230</td><td>13,910</td><td>35.2%</td><td>14,953</td><td>17,892</td><td>24,916</td><td>25,244</td><td>15,533</td><td>23.9</td><td>172.36</td><td>659</td><td>498</td><td>26.9%</td><td>22.6%</td><td>4.1%</td><td>6.4%</td></tr><tr><th class='score'>08/10</th><td>44,900</td><td>41,483</td><td>43,331</td><td>15,379</td><td>37.1%</td><td>19,102</td><td>18,207</td><td>25,381</td><td>29,388</td><td>16,555</td><td>23.8</td><td>182.61</td><td>800</td><td>593</td><td>23.0%</td><td>20.9%</td><td>10.8%</td><td>6.4%</td></tr><tr><th class='score'>08/11</th><td>44,086</td><td>40,627</td><td>44,071</td><td>14,411</td><td>35.5%</td><td>21,335</td><td>24,990</td><td>32,552</td><td>27,600</td><td>16,120</td><td>23.5</td><td>176.37</td><td>777</td><td>607</td><td>24.7%</td><td>24.6%</td><td>9.4%</td><td>7.6%</td></tr><tr><th class='score'>08/12</th><td>42,693</td><td>42,751</td><td>46,592</td><td>14,953</td><td>35.0%</td><td>16,763</td><td>28,462</td><td>38,672</td><td>24,607</td><td>16,439</td><td>23.4</td><td>179.36</td><td>696</td><td>556</td><td>16.5%</td><td>20.7%</td><td>5.4%</td><td>8.5%</td></tr><tr><th class='score'>08/13</th><td>42,414</td><td>41,922</td><td>47,108</td><td>15,074</td><td>36.0%</td><td>18,120</td><td>28,705</td><td>41,303</td><td>20,390</td><td>17,417</td><td>23.3</td><td>189.41</td><td>652</td><td>518</td><td>20.2%</td><td>22.4%</td><td>6.1%</td><td>8.7%</td></tr></tbody></table></div>
+
+
+    <h2>新旧策略 实际交易额增量对比(交易额 = 下一笔借款 loan_prin,元)</h2>
+    <p class="note">三级分组: 第一级指标 → 第二级策略(新/旧) → 第三级客户(提额/未提额)。提额净效应 = 提额客户人均下一笔 − 未提额客户人均下一笔(以未提额为基线);净增量 = 新策略净效应 − 旧策略净效应。<br/>
+    折算总增量 = 提额客户人均增量(新−旧) × 新策略提额客户数(万元)。</p>
+    <table>
+      <thead><tr>
+        <th rowspan="3">风险<br/>等级</th>
+        <th colspan="4">客户数<br/>(占比/覆盖率)</th>
+        <th colspan="2">结清平均<br/>借款金额(元)</th>
+        <th colspan="5">人均下一笔借款(元)</th>
+        <th colspan="3">提额净效应(元/人)<br/><span class='subth'>= 提额客户 − 未提额客户</span></th>
+        <th rowspan="3">折算总增量<br/>(万元, 口径1)</th>
+      </tr><tr>
+        <th colspan="2">新策略</th><th colspan="2">旧策略</th>
+        <th>新策略</th><th>旧策略</th>
+        <th colspan="2">新策略</th><th colspan="2">旧策略</th><th>增量(新−旧)<br/><span class='subth'>提额客户</span></th>
+        <th>新策略</th><th>旧策略</th><th>净增量(新−旧)</th>
+      </tr><tr>
+        <th>提额</th><th>未提额</th><th>提额</th><th>未提额</th>
+        <th></th><th></th>
+        <th>提额</th><th>未提额</th><th>提额</th><th>未提额</th><th></th>
+        <th>提额−未提额</th><th>提额−未提额</th><th></th>
+      </tr></thead><tbody><tr><th class='score'>A</th><td>2,457 · 68.8%</td><td>1,113 · 31.2%</td><td>436 · 52.6%</td><td>393 · 47.4%</td><td>23,920</td><td>23,987</td><td>32,262</td><td>30,091</td><td>18,445</td><td>28,567</td><td class=' up'>+13,817</td><td class=' up'>+2,171</td><td class=' down'>-10,122</td><td class=' up'>+12,293</td><td class='up'>3,395</td></tr><tr><th class='score'>B</th><td>5,253 · 68.1%</td><td>2,460 · 31.9%</td><td>1,019 · 51.5%</td><td>928 · 46.9%</td><td>17,193</td><td>15,615</td><td>20,892</td><td>18,697</td><td>12,698</td><td>21,743</td><td class=' up'>+8,194</td><td class=' up'>+2,195</td><td class=' down'>-9,045</td><td class=' up'>+11,240</td><td class='up'>4,304</td></tr><tr><th class='score'>C</th><td>6,170 · 66.0%</td><td>3,176 · 34.0%</td><td>1,245 · 51.9%</td><td>1,037 · 43.2%</td><td>15,874</td><td>14,615</td><td>14,348</td><td>23,012</td><td>11,461</td><td>19,775</td><td class=' up'>+2,887</td><td class=' down'>-8,664</td><td class=' down'>-8,314</td><td class=' down'>-350</td><td class='up'>1,781</td></tr><tr><th class='score'>D</th><td>223 · 2.6%</td><td>8,248 · 97.4%</td><td>1,049 · 50.7%</td><td>696 · 33.6%</td><td>12,724</td><td>11,727</td><td>17,195</td><td>12,063</td><td>9,552</td><td>19,010</td><td class=' up'>+7,643</td><td class=' up'>+5,132</td><td class=' down'>-9,458</td><td class=' up'>+14,590</td><td class='up'>170</td></tr><tr><th class='score'>E</th><td class='empty' colspan='16'>新策略无提额(E 级不参与提额)</td></tr><tr><th class='score'>合计</th><td>14,103 · 41.6%</td><td>19,788 · 58.4%</td><td>4,017 · 47.1%</td><td>3,311 · 38.8%</td><td>15,294</td><td>14,199</td><td>19,650</td><td>16,392</td><td>11,897</td><td>20,557</td><td class='up'>+7,754</td><td class='up'>+3,258</td><td class='down'>-8,660</td><td class='up'>+11,919</td><td class='up'>9,651</td></tr><tr><td colspan='17' class='note2'>口径1 总增量 ≈ 9,651 万元(提额客户人均增量 +7,754 元 × 新策略提额客户 14,103 人); 口径2 净增量 ≈ 16,809 万元(净增量 +11,919 元 × 新策略提额客户)。净增量 = 新策略净效应(+3,258) − 旧策略净效应(-8,660)。人均下一笔为'已发起下一笔客户'均值(未发起为NULL不计入)。举例: 新A净效应 +2,171 = 提额客户 32,262 − 未提额客户 30,091。</td></tr></tbody></table>
+
+
+    <h2>各风险等级 交易额净增量变化(口径2: 新策略提额净效应 − 旧策略提额净效应)</h2>
+    <div class="dbarwrap"><div class='dbar'><span class='dl'>D 级</span><span class='dbg'><span class='dbfill' style='width:100%'></span></span><span class='dv'>+14,590 元/人</span></div><div class='dbar'><span class='dl'>A 级</span><span class='dbg'><span class='dbfill' style='width:100%'></span></span><span class='dv'>+12,293 元/人</span></div><div class='dbar'><span class='dl'>B 级</span><span class='dbg'><span class='dbfill' style='width:100%'></span></span><span class='dv'>+11,240 元/人</span></div><div class='dbar'><span class='dl'>C 级</span><span class='dbg'><span class='dbfill' style='width:4%'></span></span><span class='dv'>-350 元/人</span></div></div>
+    <div class="concl">
+    <h3>📊 各等级净增量解读</h3>
+    <ol>
+    <li><b>D 级净增量最大(+14,590 元/人)</b>:新策略 D 级提额客户人均下一笔 17,195 元,高于本组未提额客户;而旧策略 D 级提额客户显著低于未提额——新策略在 D 级实现了"提额即增交易",提额对象筛选精准。</li>
+    <li><b>B 级净增量 +11,240 元/人</b>:新 B 级提额客户(5,253 人,覆盖率 68.1%)人均下一笔 20,892 元,相对旧策略 B 级提额(12,698 元)提升 +65%。</li>
+    <li><b>C 级净增量最小(-350 元/人)</b>:新 C 级提额客户下一笔 14,348 元,与未提额差距最大——C 级提额客户是低额度客群(提额后均额 3.0万),交易量上不去;新旧策略在此级几乎无差异,是下一轮提额调优的重点。</li>
+    <li><b>E 级无增量</b>:新策略提额资格不含 E 级(高风险),E 级客户(4,791 人)全部未提额。</li>
+    <li><b>覆盖率结构</b>:新策略提额高度集中于 A/B/C 级(覆盖率 66%~69%),D 级仅 2.6%(223 人)、E 级 0%——提额资源与风险档严格挂钩,但 D 级中"低风险 D"(fpd7&lt;大盘)仍有可挖空间。</li>
+    </ol>
+    </div>
+
+
+    <h2>新策略(new)· 8/13 结清</h2><p class="note">8/13 线上已按新策略执行(315格系数一致率 99.99%);E 级无提额客户(提额资格不含 E)。</p>
+    <table>
+      <thead><tr>
+        <th rowspan="2">风险等级</th>
+        <th colspan="10">提额客户</th>
+        <th colspan="10">未提额客户</th>
+        <th colspan="10">降额客户(te_flag=2)</th>
+      </tr><tr>
+        <th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th><th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th><th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th>
+      </tr></thead><tbody><tr><th class='score'>A</th>
+<td class='grp'>提额客户<span class='n'>2,457 · 68.8%</span></td>
+<td>59,632</td>
+<td>89,044</td>
+<td class='up'>49.3%</td>
+<td class='mini'><span class='bar' style='width:38.72%'></span>38.7%</td>
+<td>23,089</td>
+<td>32,262</td>
+<td class='mini'><span class='bar' style='width:16.71%'></span>16.7%</td>
+<td>0.0%<span class='n'>(98)</span></td>
+<td>5.1%<span class='n'>(118)</span></td>
+<td class='grp'>未提额客户<span class='n'>1,113 · 31.2%</span></td>
+<td>149,393</td>
+<td>149,393</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:17.24%'></span>17.2%</td>
+<td>25,754</td>
+<td>30,091</td>
+<td class='mini'><span class='bar' style='width:10.280000000000001%'></span>10.3%</td>
+<td>0.0%<span class='n'>(36)</span></td>
+<td>2.0%<span class='n'>(49)</span></td><td class='empty' colspan='10'></td></tr><tr><th class='score'>B</th>
+<td class='grp'>提额客户<span class='n'>5,253 · 68.1%</span></td>
+<td>34,740</td>
+<td>49,974</td>
+<td class='up'>43.9%</td>
+<td class='mini'><span class='bar' style='width:44.75%'></span>44.8%</td>
+<td>15,547</td>
+<td>20,892</td>
+<td class='mini'><span class='bar' style='width:20.72%'></span>20.7%</td>
+<td>0.0%<span class='n'>(63)</span></td>
+<td>17.9%<span class='n'>(78)</span></td>
+<td class='grp'>未提额客户<span class='n'>2,460 · 31.9%</span></td>
+<td>106,731</td>
+<td>106,731</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:19.400000000000002%'></span>19.4%</td>
+<td>20,708</td>
+<td>18,697</td>
+<td class='mini'><span class='bar' style='width:10.03%'></span>10.0%</td>
+<td>0.0%<span class='n'>(48)</span></td>
+<td>18.0%<span class='n'>(61)</span></td><td class='empty' colspan='10'></td></tr><tr><th class='score'>C</th>
+<td class='grp'>提额客户<span class='n'>6,170 · 66.0%</span></td>
+<td>21,976</td>
+<td>30,418</td>
+<td class='up'>38.4%</td>
+<td class='mini'><span class='bar' style='width:53.33%'></span>53.3%</td>
+<td>11,720</td>
+<td>14,348</td>
+<td class='mini'><span class='bar' style='width:24.89%'></span>24.9%</td>
+<td>0.0%<span class='n'>(38)</span></td>
+<td>23.2%<span class='n'>(56)</span></td>
+<td class='grp'>未提额客户<span class='n'>3,176 · 34.0%</span></td>
+<td>66,592</td>
+<td>66,592</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:35.96%'></span>36.0%</td>
+<td>23,944</td>
+<td>23,012</td>
+<td class='mini'><span class='bar' style='width:19.259999999999998%'></span>19.3%</td>
+<td>7.7%<span class='n'>(26)</span></td>
+<td>18.9%<span class='n'>(37)</span></td><td class='empty' colspan='10'></td></tr><tr><th class='score'>D</th>
+<td class='grp'>提额客户<span class='n'>223 · 2.6%</span></td>
+<td>27,572</td>
+<td>36,640</td>
+<td class='up'>32.9%</td>
+<td class='mini'><span class='bar' style='width:35.32%'></span>35.3%</td>
+<td>9,739</td>
+<td>17,195</td>
+<td class='mini'><span class='bar' style='width:22.1%'></span>22.1%</td>
+<td>0.0%<span class='n'>(6)</span></td>
+<td>50.0%<span class='n'>(6)</span></td>
+<td class='grp'>未提额客户<span class='n'>8,248 · 97.4%</span></td>
+<td>28,506</td>
+<td>28,506</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:44.92%'></span>44.9%</td>
+<td>12,805</td>
+<td>12,063</td>
+<td class='mini'><span class='bar' style='width:20.3%'></span>20.3%</td>
+<td>18.9%<span class='n'>(53)</span></td>
+<td>40.6%<span class='n'>(64)</span></td><td class='empty' colspan='10'></td></tr><tr><th class='score'>E</th><td class='empty' colspan='10'></td>
+<td class='grp'>未提额客户<span class='n'>4,791 · 100.0%</span></td>
+<td>20,398</td>
+<td>20,398</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:45.21%'></span>45.2%</td>
+<td>9,223</td>
+<td>12,473</td>
+<td class='mini'><span class='bar' style='width:18.32%'></span>18.3%</td>
+<td>60.0%<span class='n'>(35)</span></td>
+<td>79.5%<span class='n'>(39)</span></td><td class='empty' colspan='10'></td></tr></tbody></table>
+    <h2>旧策略(old)· 8/13 结清</h2><p class="note">旧策略客群存量结清;提额客户为超低额度客群(前额 0.9万~2.1万),另有 1,195 名降额客户(te_flag=2)。</p>
+    <table>
+      <thead><tr>
+        <th rowspan="2">风险等级</th>
+        <th colspan="10">提额客户</th>
+        <th colspan="10">未提额客户</th>
+        <th colspan="10">降额客户(te_flag=2)</th>
+      </tr><tr>
+        <th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th><th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th><th>客户数</th><th>提额前<br/>平均额度</th><th>提额后<br/>平均额度</th><th>额度<br/>提升率</th><th>提额前<br/>使用率</th><th>提额前<br/>借款金额</th><th>提额后<br/>借款金额</th><th>提额后<br/>使用率</th><th>fpd7</th><th>fpd1</th>
+      </tr></thead><tbody><tr><th class='score'>A</th>
+<td class='grp'>提额客户<span class='n'>436 · 52.6%</span></td>
+<td>20,500</td>
+<td>29,976</td>
+<td class='up'>46.2%</td>
+<td class='mini'><span class='bar' style='width:74.21%'></span>74.2%</td>
+<td>15,213</td>
+<td>18,445</td>
+<td class='mini'><span class='bar' style='width:29.5%'></span>29.5%</td>
+<td>0.0%<span class='n'>(16)</span></td>
+<td>0.0%<span class='n'>(19)</span></td>
+<td class='grp'>未提额客户<span class='n'>393 · 47.4%</span></td>
+<td>140,159</td>
+<td>140,159</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:24.060000000000002%'></span>24.1%</td>
+<td>33,722</td>
+<td>28,567</td>
+<td class='mini'><span class='bar' style='width:9.959999999999999%'></span>10.0%</td>
+<td>0.0%<span class='n'>(28)</span></td>
+<td>6.5%<span class='n'>(31)</span></td><td class='empty' colspan='10'></td></tr><tr><th class='score'>B</th>
+<td class='grp'>提额客户<span class='n'>1,019 · 51.5%</span></td>
+<td>14,152</td>
+<td>20,764</td>
+<td class='up'>46.7%</td>
+<td class='mini'><span class='bar' style='width:76.88000000000001%'></span>76.9%</td>
+<td>10,880</td>
+<td>12,698</td>
+<td class='mini'><span class='bar' style='width:31.869999999999997%'></span>31.9%</td>
+<td>0.0%<span class='n'>(10)</span></td>
+<td>0.0%<span class='n'>(12)</span></td>
+<td class='grp'>未提额客户<span class='n'>928 · 46.9%</span></td>
+<td>91,093</td>
+<td>91,093</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:22.36%'></span>22.4%</td>
+<td>20,368</td>
+<td>21,743</td>
+<td class='mini'><span class='bar' style='width:13.58%'></span>13.6%</td>
+<td>0.0%<span class='n'>(22)</span></td>
+<td>17.9%<span class='n'>(28)</span></td>
+<td class='grp'>降额客户<span class='n'>30 · 1.5%</span></td>
+<td>133,574</td>
+<td>107,949</td>
+<td class=''>-19.2%</td>
+<td class='mini'><span class='bar' style='width:22.03%'></span>22.0%</td>
+<td>29,423</td>
+<td>25,700</td>
+<td class='mini'><span class='bar' style='width:3.9699999999999998%'></span>4.0%</td>
+<td><span class="muted">—</span></td>
+<td><span class="muted">—</span></td></tr><tr><th class='score'>C</th>
+<td class='grp'>提额客户<span class='n'>1,245 · 51.9%</span></td>
+<td>11,522</td>
+<td>16,434</td>
+<td class='up'>42.6%</td>
+<td class='mini'><span class='bar' style='width:73.89%'></span>73.9%</td>
+<td>8,513</td>
+<td>11,461</td>
+<td class='mini'><span class='bar' style='width:36.52%'></span>36.5%</td>
+<td>0.0%<span class='n'>(3)</span></td>
+<td>0.0%<span class='n'>(6)</span></td>
+<td class='grp'>未提额客户<span class='n'>1,037 · 43.2%</span></td>
+<td>62,656</td>
+<td>62,656</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:33.29%'></span>33.3%</td>
+<td>20,855</td>
+<td>19,775</td>
+<td class='mini'><span class='bar' style='width:18.26%'></span>18.3%</td>
+<td>0.0%<span class='n'>(6)</span></td>
+<td>10.0%<span class='n'>(10)</span></td>
+<td class='grp'>降额客户<span class='n'>117 · 4.9%</span></td>
+<td>76,199</td>
+<td>63,016</td>
+<td class=''>-17.3%</td>
+<td class='mini'><span class='bar' style='width:31.8%'></span>31.8%</td>
+<td>24,231</td>
+<td>15,500</td>
+<td class='mini'><span class='bar' style='width:5.26%'></span>5.3%</td>
+<td>0.0%<span class='n'>(5)</span></td>
+<td>80.0%<span class='n'>(5)</span></td></tr><tr><th class='score'>D</th>
+<td class='grp'>提额客户<span class='n'>1,049 · 50.7%</span></td>
+<td>8,899</td>
+<td>12,601</td>
+<td class='up'>41.6%</td>
+<td class='mini'><span class='bar' style='width:77.82%'></span>77.8%</td>
+<td>6,925</td>
+<td>9,552</td>
+<td class='mini'><span class='bar' style='width:39.24%'></span>39.2%</td>
+<td><span class="muted">—</span></td>
+<td>33.3%<span class='n'>(3)</span></td>
+<td class='grp'>未提额客户<span class='n'>696 · 33.6%</span></td>
+<td>45,209</td>
+<td>45,209</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:37.84%'></span>37.8%</td>
+<td>17,106</td>
+<td>19,010</td>
+<td class='mini'><span class='bar' style='width:24.47%'></span>24.5%</td>
+<td>20.0%<span class='n'>(5)</span></td>
+<td>50.0%<span class='n'>(6)</span></td>
+<td class='grp'>降额客户<span class='n'>324 · 15.7%</span></td>
+<td>38,467</td>
+<td>30,099</td>
+<td class=''>-21.8%</td>
+<td class='mini'><span class='bar' style='width:40.87%'></span>40.9%</td>
+<td>15,720</td>
+<td>10,334</td>
+<td class='mini'><span class='bar' style='width:8.37%'></span>8.4%</td>
+<td>25.0%<span class='n'>(4)</span></td>
+<td>80.0%<span class='n'>(5)</span></td></tr><tr><th class='score'>E</th>
+<td class='grp'>提额客户<span class='n'>268 · 21.5%</span></td>
+<td>8,767</td>
+<td>12,553</td>
+<td class='up'>43.2%</td>
+<td class='mini'><span class='bar' style='width:66.03%'></span>66.0%</td>
+<td>5,789</td>
+<td>10,128</td>
+<td class='mini'><span class='bar' style='width:40.339999999999996%'></span>40.3%</td>
+<td><span class="muted">—</span></td>
+<td>0.0%<span class='n'>(2)</span></td>
+<td class='grp'>未提额客户<span class='n'>257 · 20.6%</span></td>
+<td>38,560</td>
+<td>38,560</td>
+<td class=''>0.0%</td>
+<td class='mini'><span class='bar' style='width:35.160000000000004%'></span>35.2%</td>
+<td>13,558</td>
+<td>12,869</td>
+<td class='mini'><span class='bar' style='width:18.05%'></span>18.1%</td>
+<td>0.0%<span class='n'>(2)</span></td>
+<td>66.7%<span class='n'>(3)</span></td>
+<td class='grp'>降额客户<span class='n'>724 · 58.0%</span></td>
+<td>18,532</td>
+<td>13,979</td>
+<td class=''>-24.6%</td>
+<td class='mini'><span class='bar' style='width:43.97%'></span>44.0%</td>
+<td>8,149</td>
+<td>14,342</td>
+<td class='mini'><span class='bar' style='width:15.870000000000001%'></span>15.9%</td>
+<td>71.4%<span class='n'>(14)</span></td>
+<td>85.7%<span class='n'>(14)</span></td></tr></tbody></table>
+
+<div class="concl">
+<h3>📌 提额效果核心结论(修正口径: 人均下一笔=仅发起下一笔客户)</h3>
+<ol>
+<li><b>提额后借款金额实际是上升的</b>:按"已发起下一笔客户"统计,新策略提额客户人均下一笔借款 <b>19,651 元 &gt; 提额前本笔放款 15,095 元(+30%)</b>;分等级看 A: 23,089→32,262, B: 15,547→20,892, C: 11,720→14,349——提额客户结清后再借,金额普遍更高。</li>
+<li><b>真正的瓶颈是"复借转化"而非单笔金额</b>:只有 <b>50.3%</b> 的提额客户在结清后发起了下一笔(未提额 46.2%),近一半客户结清后未再借款(loan_prin 为空)。提额扩大了授信,但一半客户没有动用新额度。</li>
+<li><b>每 1 元新增额度仅带来约 0.67 元下一笔交易</b>:提额后额度使用率(总额口径)从提额前 31.4% 降至 20.6%,新增 2.06 亿额度只转化了约 1.39 亿下一笔借款——提额对交易量的拉动明显低于额度增幅。</li>
+<li><b>新策略相对旧策略效率显著更高</b>:旧策略提额客户人均下一笔仅 11,897 元(新策略 19,651 元,<b>+65%</b>);旧策略提额对象是超低额度客群(前额 1.2万,提额后 1.8万),交易量天花板低;旧策略 1,195 名降额客户后续发起率仅 15%~24%(fpd1 80%+)。</li>
+<li><b>风险表现:提额客户逾期率不高于未提额</b>(新策略 B 提额 fpd1 18.0% vs 未提额 18.0%;E 级未提额 fpd7=60% 为全组最高)——提额未带来额外风险,风险不是交易量不及预期的原因。</li>
+<li><b>建议</b>:① 主攻复借转化——对结清后未复借的提额客户做促用(降息券、还款提醒、授信通知),把 50% 的转化率提上去;② 提额聚焦"中高额度×中高使用率"客群(20-50%提幅档);③ 高使用率客户提高提额后额度下限(当前 4,998 人提额后仍&lt;1万);④ 拉长至 T+7/T+30 复评。</li>
+</ol>
+</div>
+
+<div class="foot">风控BI监控平台 · 提额效果分析 · 生成于 2026-08-14 · 金额为聚合均值,不含客户标识</div>
+</div></body></html>

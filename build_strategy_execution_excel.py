@@ -7,6 +7,7 @@ online outcome statistics for the matching 2026-08-12 new-strategy cohort.
 """
 
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,11 @@ from probe_flexi_cash_strategy import get_odps, query
 
 TABLE = "pb_biz_credit.flexi_cash_jq_result_v1"
 COEFFICIENT_FILE = Path("C:/Users/PP-2026070302/Desktop") / "提额系数20260812.xlsx"
-OUTPUT = Path("risk_analysis/提额策略执行分析_20260812_v2.xlsx")
-JSON_OUTPUT = Path("risk_analysis/strategy_execution_by_cell_20260812.json")
+# 结清日期可通过命令行指定: python build_strategy_execution_excel.py 2026-08-13
+BUSINESS_DATE = sys.argv[1] if len(sys.argv) > 1 else "2026-08-12"
+DATE_TAG = BUSINESS_DATE.replace("-", "")
+OUTPUT = Path("risk_analysis") / f"提额策略执行分析_{DATE_TAG}_v2.xlsx"
+JSON_OUTPUT = Path("risk_analysis") / f"strategy_execution_by_cell_{DATE_TAG}.json"
 TARGET_AVERAGE_YUAN = 50_000.0
 
 
@@ -63,8 +67,14 @@ def new_metric() -> dict[str, Any]:
         "raised_before_sum_cent": 0.0,
         "raised_after_sum_cent": 0.0,
         "raised_increment_sum_cent": 0.0,
+        "raised_loan_sum": 0.0,
+        "raised_next_prin_sum": 0.0,
+        "raised_next_prin_cnt": 0.0,
         "non_raised_before_sum_cent": 0.0,
         "non_raised_after_sum_cent": 0.0,
+        "non_raised_loan_sum": 0.0,
+        "non_raised_next_prin_sum": 0.0,
+        "non_raised_next_prin_cnt": 0.0,
         "raised_t0_cnt": 0.0,
         "non_raised_t0_cnt": 0.0,
         "raised_next_loan_cnt": 0.0,
@@ -122,6 +132,9 @@ def add_group(metric: dict[str, Any], row: dict[str, Any], expected_rate: float 
     metric[f"{prefix}_cnt"] += cnt
     metric[f"{prefix}_before_sum_cent"] += zero(row["before_sum_cent"])
     metric[f"{prefix}_after_sum_cent"] += zero(row["after_sum_cent"])
+    metric[f"{prefix}_loan_sum"] += zero(row["loan_sum"])
+    metric[f"{prefix}_next_prin_sum"] += zero(row["next_prin_sum"])
+    metric[f"{prefix}_next_prin_cnt"] += zero(row["next_prin_cnt"])
     metric[f"{prefix}_t0_cnt"] += zero(row["t0_cnt"])
     metric[f"{prefix}_next_loan_cnt"] += zero(row["next_loan_cnt"])
     for horizon in ("fpd1", "fpd7", "fpd15", "fpd30"):
@@ -191,6 +204,13 @@ def calculate(metric: dict[str, Any], expected_rate: float | None = None) -> dic
         "实际未变人数": int(metric["actual_unchanged_cnt"]),
         "实际降额人数": int(metric["actual_decrease_cnt"]),
     }
+    # 借款金额与额度使用率(逾期指标前); loan_prin 仅已发起下一笔客户有值(其余为NULL), 平均借款金额按已发起客户计
+    result["提额客户平均借款金额(元)"] = safe_div(metric["raised_loan_sum"], raised_count * 100)
+    result["提额客户提额后平均借款金额(元)"] = safe_div(metric["raised_next_prin_sum"], metric["raised_next_prin_cnt"])
+    result["提额客户提额后额度使用率"] = safe_div(metric["raised_next_prin_sum"], metric["raised_after_sum_cent"] / 100)
+    result["未提额客户平均借款金额(元)"] = safe_div(metric["non_raised_loan_sum"], non_raised_count * 100)
+    result["未提额客户提额后平均借款金额(元)"] = safe_div(metric["non_raised_next_prin_sum"], metric["non_raised_next_prin_cnt"])
+    result["未提额客户提额后额度使用率"] = safe_div(metric["non_raised_next_prin_sum"], metric["non_raised_after_sum_cent"] / 100)
     for horizon in ("FPD1", "FPD7", "FPD15", "FPD30"):
         lower = horizon.lower()
         result[f"提额客户{horizon}"] = safe_div(metric[f"raised_{lower}_num"], metric[f"raised_{lower}_den"])
@@ -246,6 +266,9 @@ def main() -> None:
         SUM(CAST(jq_credit_quota AS DOUBLE)) AS before_sum_cent,
         SUM(CAST(cash_quota_amount_now_after AS DOUBLE)) AS after_sum_cent,
         SUM(CAST(cash_quota_amount_now_after AS DOUBLE) - CAST(jq_credit_quota AS DOUBLE)) AS increment_sum_cent,
+        SUM(CAST(loan_amount AS DOUBLE)) AS loan_sum,
+        SUM(CAST(loan_prin AS DOUBLE)) AS next_prin_sum,
+        SUM(CASE WHEN CAST(loan_prin AS DOUBLE) > 0 THEN 1 ELSE 0 END) AS next_prin_cnt,
         SUM(CASE WHEN CAST(cash_quota_amount_now_after AS DOUBLE) > CAST(jq_credit_quota AS DOUBLE) THEN 1 ELSE 0 END) AS actual_raise_cnt,
         SUM(CASE WHEN CAST(cash_quota_amount_now_after AS DOUBLE) = CAST(jq_credit_quota AS DOUBLE) THEN 1 ELSE 0 END) AS actual_unchanged_cnt,
         SUM(CASE WHEN CAST(cash_quota_amount_now_after AS DOUBLE) < CAST(jq_credit_quota AS DOUBLE) THEN 1 ELSE 0 END) AS actual_decrease_cnt,
@@ -260,7 +283,7 @@ def main() -> None:
         SUM(CAST(fpd30_fz_dd AS DOUBLE)) AS fpd30_num,
         SUM(CAST(fpd30_fm_dd AS DOUBLE)) AS fpd30_den
       FROM {TABLE}
-      WHERE jq_date = '2026-08-12'
+      WHERE jq_date = '{BUSINESS_DATE}'
         AND str_type = 'new'
         AND CAST(jq_credit_quota AS DOUBLE) >= 0
         AND CAST(cash_quota_amount_now_after AS DOUBLE) >= 0
@@ -314,6 +337,8 @@ def main() -> None:
         "未提额客户提额前平均额度(元)", "未提额客户提额后平均额度(元)",
         "结清客户提额前平均额度(元)", "结清客户提额后平均额度(元)", "结清客户额度提升率",
         "提额客户T0发起率", "未提额客户T0发起率", "提额客户下一笔发起率", "未提额客户下一笔发起率",
+        "提额客户平均借款金额(元)", "提额客户提额后平均借款金额(元)", "提额客户提额后额度使用率",
+        "未提额客户平均借款金额(元)", "未提额客户提额后平均借款金额(元)", "未提额客户提额后额度使用率",
         "提额客户FPD1", "提额客户FPD1样本", "未提额客户FPD1", "未提额客户FPD1样本",
         "提额客户FPD7", "提额客户FPD7样本", "未提额客户FPD7", "未提额客户FPD7样本",
         "提额客户FPD15", "提额客户FPD15样本", "未提额客户FPD15", "未提额客户FPD15样本",
@@ -349,6 +374,7 @@ def main() -> None:
     percentage_headers = {
         "提额覆盖率", "满足提额条件客户线上系数一致率", "提额客户实际提幅(加权)", "结清客户额度提升率",
         "提额客户T0发起率", "未提额客户T0发起率", "提额客户下一笔发起率", "未提额客户下一笔发起率",
+        "提额客户提额后额度使用率", "未提额客户提额后额度使用率",
         "提额客户FPD1", "未提额客户FPD1", "提额客户FPD7", "未提额客户FPD7",
         "提额客户FPD15", "未提额客户FPD15", "提额客户FPD30", "未提额客户FPD30",
         "提额客户实际提额率", "未提额客户实际未变率", "提额/未提额执行符合率",
@@ -357,6 +383,8 @@ def main() -> None:
         "提额客户提额前平均额度(元)", "提额客户提额后平均额度(元)", "提额客户户均增额(元)",
         "未提额客户提额前平均额度(元)", "未提额客户提额后平均额度(元)",
         "结清客户提额前平均额度(元)", "结清客户提额后平均额度(元)",
+        "提额客户平均借款金额(元)", "提额客户提额后平均借款金额(元)",
+        "未提额客户平均借款金额(元)", "未提额客户提额后平均借款金额(元)",
     }
     for header in percentage_headers:
         column = first_appended_column + appended_headers.index(header)
@@ -377,7 +405,7 @@ def main() -> None:
     overview = workbook.create_sheet("整体达成")
     overview.append(["提额策略整体达成", "结果", "说明"])
     overview_rows = [
-        ("统计范围", "2026-08-12 · str_type=new", "提额前/后额度有效的结清样本。"),
+        ("统计范围", f"{BUSINESS_DATE} · str_type=new", "提额前/后额度有效的结清样本。"),
         ("目标户均额度", TARGET_AVERAGE_YUAN, "沿用 5 万元户均额度目标。"),
         ("全量有效结清样本", full_summary["结清客户数"], "包含 1 条无法映射至315格策略表的异常维度样本。"),
         ("策略表可映射结清样本", mapped_summary["结清客户数"], "逐格统计表的合计口径。"),
@@ -407,7 +435,7 @@ def main() -> None:
 
     overview.append([])
     overview.append(["贷后与发起表现", "提额客户", "未提额客户"])
-    for horizon in ("T0发起率", "下一笔发起率", "FPD1", "FPD7", "FPD15", "FPD30"):
+    for horizon in ("T0发起率", "下一笔发起率", "平均借款金额(元)", "提额后平均借款金额(元)", "提额后额度使用率", "FPD1", "FPD7", "FPD15", "FPD30"):
         if horizon.startswith("FPD"):
             overview.append((
                 horizon,
@@ -419,6 +447,12 @@ def main() -> None:
                 full_summary[f"提额客户{horizon}样本"],
                 full_summary[f"未提额客户{horizon}样本"],
             ))
+        elif horizon == "平均借款金额(元)":
+            overview.append((horizon, full_summary["提额客户平均借款金额(元)"], full_summary["未提额客户平均借款金额(元)"]))
+        elif horizon == "提额后平均借款金额(元)":
+            overview.append((horizon, full_summary["提额客户提额后平均借款金额(元)"], full_summary["未提额客户提额后平均借款金额(元)"]))
+        elif horizon == "提额后额度使用率":
+            overview.append((horizon, full_summary["提额客户提额后额度使用率"], full_summary["未提额客户提额后额度使用率"]))
         else:
             overview.append((horizon, full_summary[f"提额客户{horizon}"], full_summary[f"未提额客户{horizon}"]))
 
@@ -438,13 +472,13 @@ def main() -> None:
     for row_index in range(2, overview.max_row + 1):
         overview.cell(row_index, 2).alignment = Alignment(vertical="center")
         overview.cell(row_index, 3).alignment = Alignment(wrap_text=True, vertical="center")
-    percentage_summary_rows = {7, 9, 13, 15, 18, 22, 23, section_row + 1, section_row + 2, section_row + 3, section_row + 5, section_row + 7, section_row + 9, section_row + 11}
+    percentage_summary_rows = {7, 9, 13, 15, 18, 22, 23, section_row + 1, section_row + 2, section_row + 5, section_row + 6, section_row + 8, section_row + 10, section_row + 12}
     for row_index in percentage_summary_rows:
         if row_index <= overview.max_row:
             overview.cell(row_index, 2).number_format = "0.00%"
             if row_index >= section_row:
                 overview.cell(row_index, 3).number_format = "0.00%"
-    amount_summary_rows = {3, 6, 8, 10, 11, 16, 17, 20, 21}
+    amount_summary_rows = {3, 6, 8, 10, 11, 16, 17, 20, 21, section_row + 3, section_row + 4}
     for row_index in amount_summary_rows:
         if row_index <= overview.max_row:
             overview.cell(row_index, 2).number_format = "#,##0.00"
@@ -461,7 +495,9 @@ def main() -> None:
         ("T0发起率", "next_curday_flag=1 / 对应提额或未提额样本数。"),
         ("下一笔发起率", "next_loan_flag=1 / 对应提额或未提额样本数。"),
         ("FPD口径", "客户口径：fpdX_fz_dd / fpdX_fm_dd。每个FPD指标旁保留分母样本数；成熟样本较少时不可仅比较比率。"),
-        ("金额单位", "原始额度字段单位为分；本工作簿新增平均额度、总增额字段均已转换为元。"),
+        ("金额单位", "额度与当前笔放款(loan_amount)单位为分, 新增平均借款金额字段已转换为元; 提额后平均借款金额取自 loan_prin(下一笔借款金额, 单位元)。"),
+        ("提额后额度使用率", "提额客户提额后平均借款金额(loan_prin) / 提额后平均额度(cash_quota_amount_now_after)。未提额客户额度未变, 使用率为下一笔借款/原额度。"),
+        ("借款金额口径", "提额前平均借款金额=结清这笔放款(loan_amount)平均(全员均有); 提额后平均借款金额=下一笔借款(loan_prin)平均, **仅统计已发起下一笔的客户**(未发起者为NULL不参与平均, 约50%客户发起), 与下一笔发起率配套阅读。结清日当天观测, 窗口偏短。"),
         ("隐私与凭证", "仅输出逐格聚合结果，不导出客户标识，也不在工作簿中保留 ODPS 凭证。"),
     ]
     for note in notes:
@@ -481,7 +517,7 @@ def main() -> None:
         json.dumps(
             {
                 "scope": {
-                    "business_date": "2026-08-12",
+                    "business_date": BUSINESS_DATE,
                     "strategy_scope": "str_type=new",
                     "table": TABLE,
                     "target_average_yuan": TARGET_AVERAGE_YUAN,
