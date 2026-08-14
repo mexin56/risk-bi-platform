@@ -179,8 +179,13 @@ export interface AttributionDashboard {
   };
 }
 
+import { getToken } from '@/lib/auth';
+
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(url, { headers });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(body.detail || '服务端请求失败');

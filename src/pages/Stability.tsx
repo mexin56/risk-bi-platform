@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
@@ -39,7 +39,7 @@ function KpiCard({
         ? 'bg-rose-50 text-rose-600'
         : 'bg-orange-50 text-orange-600';
   return (
-    <div className="bg-white rounded-xl border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-4 hover:shadow-[0_6px_20px_-6px_rgba(15,23,42,0.08)] transition-shadow duration-300">
+    <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-4 hover:shadow-[0_6px_20px_-6px_rgba(15,23,42,0.08)] transition-shadow duration-300">
       <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-slate-500">
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} />
         {label}

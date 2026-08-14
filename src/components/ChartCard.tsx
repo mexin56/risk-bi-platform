@@ -26,7 +26,7 @@ export default function ChartCard({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-30px' }}
       transition={{ duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] }}
-      className={`bg-white rounded-xl border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_6px_20px_-6px_rgba(15,23,42,0.08)] transition-shadow duration-300 ${className ?? ''}`}
+      className={`bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 shadow-[0_8px_32px_-12px_rgba(15,23,42,0.12)] hover:shadow-[0_16px_40px_-12px_rgba(15,23,42,0.18)] transition-shadow duration-300 ${className ?? ''}`}
     >
       <div className="flex items-center justify-between px-5 pt-4 pb-1">
         <div className="flex items-start gap-2.5">

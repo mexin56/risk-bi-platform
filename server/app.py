@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from auth import require_perm, router as auth_router
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -269,9 +270,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=False,
-    allow_methods=["GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+# 除登录外，全部接口均需 Authorization: Bearer <token>；
+# 归因数据要求当前账号具备 attribution 页面权限。
 
 
 def handle_error(exc: Exception) -> HTTPException:
@@ -282,7 +286,7 @@ def handle_error(exc: Exception) -> HTTPException:
 
 
 @app.get("/api/credit-attribution/health")
-def health() -> dict[str, Any]:
+def health(_user: dict = Depends(require_perm("attribution"))) -> dict[str, Any]:
     try:
         connection = get_connection()
         return {
@@ -296,7 +300,7 @@ def health() -> dict[str, Any]:
 
 
 @app.get("/api/credit-attribution/partitions")
-def partitions() -> JSONResponse:
+def partitions(_user: dict = Depends(require_perm("attribution"))) -> JSONResponse:
     try:
         return JSONResponse(content={"partitions": service.available_partitions()})
     except Exception as exc:
@@ -307,6 +311,7 @@ def partitions() -> JSONResponse:
 def dashboard(
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
+    _user: dict = Depends(require_perm("attribution")),
 ) -> JSONResponse:
     try:
         return JSONResponse(content=json_safe(service.dashboard(partition=pt, force=force)))
@@ -318,6 +323,7 @@ def dashboard(
 def path_trend(
     record_id: str = Query(min_length=12, max_length=12),
     pt: str | None = Query(default=None, max_length=64),
+    _user: dict = Depends(require_perm("attribution")),
 ) -> JSONResponse:
     try:
         return JSONResponse(content=json_safe(service.path_trend(record_id=record_id, partition=pt)))

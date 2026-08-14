@@ -21,6 +21,16 @@ python app.py
 
 前端通过 Vite 的 `/api` 代理访问本机 `127.0.0.1:8010` 的归因 API；API 和 MaxCompute 凭证不直接暴露给浏览器。
 
+## 登录与权限管理
+
+- 首次启动自动创建 SQLite 库（`server/data/rcbi.db`，已 Git 忽略）并初始化角色与演示账号：
+  - 管理员 `admin / admin123`（全部页面权限）
+  - 分析师 `analyst / analyst123`（除权限管理外全部）
+  - 访客 `viewer / viewer123`（只读子集）
+- 管理员登录后在「权限管理」页维护用户、角色与页面权限；角色权限修改即时生效（后端接口层同样强制校验）。
+- 初始密码可用环境变量覆盖：`AUTH_ADMIN_PASSWORD` / `AUTH_ANALYST_PASSWORD` / `AUTH_VIEWER_PASSWORD`；会话有效期 `AUTH_TOKEN_TTL_SECONDS`（默认 12 小时）。
+- 登录接口 `POST /api/auth/login`；除登录外所有 `/api` 接口均需 `Authorization: Bearer <token>`。
+
 ## 授信归因配置
 
 复制 `server/.env.example` 为 `server/.env.local`，再在本机填写配置。`server/.env.local` 已被 Git 忽略，**不得提交 AK/SK、Token 或连接 notebook**。

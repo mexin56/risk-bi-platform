@@ -10,6 +10,7 @@ export interface ThemePreset {
 }
 
 export const THEME_PRESETS: ThemePreset[] = [
+  { key: 'warmpaper', name: '暖纸', brand: '#537D96', brand300: '#8FB3C8', bg: '#F5EFE4' },
   { key: 'blue', name: '经典蓝', brand: '#4e83fd', brand300: '#9db9ff', bg: '#f4f6fa' },
   { key: 'teal', name: '青碧', brand: '#12b5a5', brand300: '#5eead4', bg: '#f2f8f7' },
   { key: 'violet', name: '靛紫', brand: '#7c6cf0', brand300: '#c4b5fd', bg: '#f6f5fb' },

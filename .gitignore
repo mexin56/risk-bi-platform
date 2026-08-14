@@ -18,6 +18,8 @@ dist-ssr
 *.ipynb
 __pycache__/
 *.py[cod]
+*.db
+server/data/
 ~$*.xlsx
 
 # Editor directories and files

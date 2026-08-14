@@ -41,7 +41,7 @@ export default function KpiCard({ kpi, index = 0 }: { kpi: OverviewKpi; index?: 
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: index * 0.05, ease: [0.22, 1, 0.36, 1] }}
     >
-      <SpotlightCard className="rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_8px_24px_-8px_rgba(78,131,253,0.25)] hover:border-blue-200/70 hover:-translate-y-0.5 transition-all duration-300">
+      <SpotlightCard className="rounded-2xl border border-white/60 bg-white/60 backdrop-blur-xl shadow-[0_8px_32px_-12px_rgba(15,23,42,0.12)] hover:shadow-[0_16px_40px_-12px_rgba(var(--brand-rgb),0.28)] hover:border-white/80 hover:-translate-y-0.5 transition-all duration-300">
         <div className="px-4 pt-3.5 pb-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[12px] text-slate-500">{kpi.label}</span>

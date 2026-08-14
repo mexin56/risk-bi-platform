@@ -1,4 +1,4 @@
-import ReactECharts from 'echarts-for-react';
+﻿import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import ChartCard from '@/components/ChartCard';
@@ -24,7 +24,7 @@ function FraudKpiCard({ kpi, index }: { kpi: StageKpi; index: number }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.05 }}
-      className="bg-white rounded-xl border border-slate-200/80 px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-md hover:-translate-y-0.5 transition-all duration-300"
+      className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-md hover:-translate-y-0.5 transition-all duration-300"
     >
       <div className="text-[12px] text-slate-500 mb-1.5">{kpi.label}</div>
       <div className="flex items-baseline gap-1">

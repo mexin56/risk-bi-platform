@@ -1,4 +1,4 @@
-import ReactECharts from 'echarts-for-react';
+﻿import ReactECharts from 'echarts-for-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { heatStyle, StatusTag, type FeishuColumn } from '@/components/FeishuTable';
 import { areaGradient, baseOption } from '@/lib/chartTheme';
@@ -152,7 +152,7 @@ export default function ModelScore() {
         {modelList.map((m) => (
           <div
             key={m.name}
-            className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+            className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-[13px] font-semibold text-slate-800 truncate">{m.name}</span>

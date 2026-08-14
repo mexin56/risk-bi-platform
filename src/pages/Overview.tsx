@@ -1,4 +1,4 @@
-import ReactECharts from 'echarts-for-react';
+﻿import ReactECharts from 'echarts-for-react';
 import { Megaphone } from 'lucide-react';
 import KpiCard from '@/components/KpiCard';
 import ChartCard from '@/components/ChartCard';
@@ -29,7 +29,7 @@ const TICKER_TONE: Record<string, string> = {
 function AlertTickerBar() {
   const items = [...alertTicker, ...alertTicker]; // 复制一遍实现无缝滚动
   return (
-    <div className="flex items-center gap-3 bg-white rounded-xl border border-slate-200/80 px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
+    <div className="flex items-center gap-3 bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 px-4 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
       <div className="shrink-0 flex items-center gap-1.5 text-[12px] font-semibold text-slate-700 pr-3 border-r border-slate-100">
         <span className="relative flex w-2 h-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-60" />
@@ -348,7 +348,7 @@ export default function Overview() {
         </ChartCard>
 
         {/* 风险信号列表 */}
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-5">
+        <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-5">
           <div className="flex items-center gap-2.5 mb-4">
             <div className="w-[3px] h-[15px] rounded-full bg-gradient-to-b from-rose-400 to-rose-400/30" />
             <div className="text-[14px] font-semibold text-slate-800">处置待办</div>

@@ -119,7 +119,7 @@ function MetricTile({
     green: { bg: '#ecfdf5', fg: '#10b981', line: '#d1fae5' },
   }[tone];
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]" style={{ borderColor: colors.line }}>
+    <div className="relative overflow-hidden rounded-2xl border bg-white/60 backdrop-blur-xl px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]" style={{ borderColor: colors.line }}>
       <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: colors.fg }} />
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[12px] text-slate-500">{label}</span>
@@ -170,7 +170,7 @@ function WindowCard({ metric, primary = false }: { metric: WindowMetric; primary
 
 function LoadingState({ text = '正在从 MaxCompute 聚合授信数据…' }: { text?: string }) {
   return (
-    <div className="flex min-h-[520px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-center shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
+    <div className="flex min-h-[520px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white/60 backdrop-blur-xl text-center shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-500">
         <LoaderCircle size={24} className="animate-spin" />
       </div>
@@ -232,7 +232,7 @@ function SelectedPathAnalysis({
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.75fr)_minmax(370px,0.9fr)]">
-          <section className="overflow-hidden rounded-xl border border-slate-100 bg-white">
+          <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white/60 backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5">
               <div>
                 <div className="text-[12px] font-semibold text-slate-800">近15天授信申请量趋势</div>
@@ -564,7 +564,7 @@ export default function CreditAttribution() {
 
   if (error && !dashboard) {
     return (
-      <div className="flex min-h-[520px] flex-col items-center justify-center rounded-2xl border border-rose-100 bg-white text-center shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
+      <div className="flex min-h-[520px] flex-col items-center justify-center rounded-2xl border border-rose-100 bg-white/60 backdrop-blur-xl text-center shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-500"><ShieldAlert size={24} /></div>
         <div className="text-[15px] font-semibold text-slate-700">授信归因服务暂不可用</div>
         <div className="mt-2 max-w-lg text-[12px] leading-5 text-slate-400">{error}</div>
@@ -582,7 +582,7 @@ export default function CreditAttribution() {
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 pb-2">
-      <section className="relative overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-[0_4px_18px_-10px_rgba(59,130,246,0.35)]">
+      <section className="relative overflow-hidden rounded-2xl border border-blue-100 bg-white/60 backdrop-blur-xl shadow-[0_4px_18px_-10px_rgba(59,130,246,0.35)]">
         <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-blue-500 via-violet-500 to-rose-400" />
         <div className="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-blue-100/60 blur-3xl" />
         <div className="relative flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">

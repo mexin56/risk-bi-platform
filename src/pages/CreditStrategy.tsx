@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import {
   BadgeCheck,
@@ -67,7 +67,7 @@ function SnapshotKpi({
 }) {
   const style = toneStyle[tone];
   return (
-    <div className="relative overflow-hidden bg-white rounded-xl border border-slate-200/80 px-4 pt-3.5 pb-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:-translate-y-0.5 hover:shadow-[0_8px_22px_-10px_rgba(15,23,42,0.18)] transition-all duration-300">
+    <div className="relative overflow-hidden bg-white/60 backdrop-blur-xl rounded-2xl border border-white/60 px-4 pt-3.5 pb-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:-translate-y-0.5 hover:shadow-[0_8px_22px_-10px_rgba(15,23,42,0.18)] transition-all duration-300">
       <div className="absolute top-0 left-0 h-[2px] w-full" style={{ background: style.line }} />
       <div className="flex items-center justify-between gap-3">
         <span className="text-[11px] font-semibold tracking-[0.07em] text-slate-500">{label}</span>
@@ -241,7 +241,7 @@ export default function CreditStrategy() {
 
   return (
     <div className="space-y-4 max-w-[1440px] mx-auto pb-2">
-      <section className="relative overflow-hidden rounded-xl border border-slate-200/90 bg-white px-5 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+      <section className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-white/60 backdrop-blur-xl px-5 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <div className="absolute inset-y-0 left-0 w-1" style={{ background: `linear-gradient(180deg, ${brand}, #76a5ff)` }} />
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="pl-1">

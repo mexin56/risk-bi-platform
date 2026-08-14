@@ -6,6 +6,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   Gauge,
+  KeyRound,
   Target,
   Layers,
   LogOut,
@@ -27,10 +28,20 @@ import ModelScore from '@/pages/ModelScore';
 import Stability from '@/pages/Stability';
 import CreditStrategy from '@/pages/CreditStrategy';
 import CreditAttribution from '@/pages/CreditAttribution';
+import UsersPage from '@/pages/Users';
+import Login from '@/pages/Login';
 import ThemeSettings from '@/components/ThemeSettings';
 import { applyTheme, getTheme, type ThemePreset } from '@/lib/theme';
+import {
+  clearToken,
+  fetchMe,
+  getToken,
+  hasPermission,
+  logout as apiLogout,
+  type AuthSession,
+} from '@/lib/auth';
 
-type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability';
+type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability' | 'users';
 
 const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] = [
   { key: 'overview', label: '大盘数据', icon: Gauge, desc: '经营全景与资产质量' },
@@ -42,6 +53,7 @@ const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] =
   { key: 'vintage', label: 'Vintage 监控', icon: Layers, desc: '账龄结构与 Cohort 表现' },
   { key: 'model', label: '模型分监控', icon: Activity, desc: 'PSI / KS / 分布漂移' },
   { key: 'stability', label: '模型稳定性', icon: ShieldCheck, desc: 'PSI趋势 · 迁移矩阵 · 漂移归因' },
+  { key: 'users', label: '权限管理', icon: KeyRound, desc: '用户 · 角色 · 页面权限' },
 ];
 
 function LiveClock() {
@@ -69,7 +81,8 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [themeKey, setThemeKey] = useState(getTheme().key);
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [loggedOut, setLoggedOut] = useState(false);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authStatus, setAuthStatus] = useState<'loading' | 'guest' | 'authed'>('loading');
   const [stage, setStage] = useState<StageKey>('pre');
   const [lifeOpen, setLifeOpen] = useState(true);
   const active = NAV.find((n) => n.key === page)!;
@@ -77,6 +90,34 @@ export default function App() {
   useEffect(() => {
     applyTheme(getTheme()); // 确保首屏 CSS 变量就位
   }, []);
+
+  // 启动时恢复会话；token 缺失/失效则进入登录页
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const user = await fetchMe();
+        if (alive) {
+          setSession({ token: getToken() ?? '', user });
+          setAuthStatus('authed');
+        }
+      } catch {
+        if (alive) setAuthStatus('guest');
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 账号权限变化后，若当前页不可见则回到第一个可见页
+  useEffect(() => {
+    if (!session) return;
+    const allowed = NAV.filter((n) =>
+      n.key === 'users' ? hasPermission(session.user, 'users') : hasPermission(session.user, n.key),
+    );
+    if (allowed.length && !allowed.some((n) => n.key === page)) setPage(allowed[0].key);
+  }, [session, page]);
 
   const handleTheme = (p: ThemePreset) => {
     applyTheme(p);
@@ -88,9 +129,17 @@ export default function App() {
     setTimeout(() => setRefreshing(false), 900);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setLogoutOpen(false);
-    setLoggedOut(true);
+    try {
+      await apiLogout();
+    } catch {
+      /* 网络异常也照常清理本地会话 */
+    }
+    clearToken();
+    setSession(null);
+    setAuthStatus('guest');
+    setPage('overview');
   };
 
   const handleNavClick = (key: PageKey) => {
@@ -110,6 +159,28 @@ export default function App() {
     setStage(s);
     setPage('lifecycle');
   };
+
+  if (authStatus === 'loading') {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center gap-4" style={{ background: 'var(--app-bg, #f4f6fa)' }}>
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 12px 32px rgba(var(--brand-rgb),0.35)' }}
+        >
+          <ShieldCheck size={26} className="text-white" />
+        </div>
+        <div className="text-[13px] text-slate-400 animate-pulse">正在验证登录状态…</div>
+      </div>
+    );
+  }
+
+  if (authStatus === 'guest') {
+    return <Login onSuccess={(s) => { setSession(s); setAuthStatus('authed'); }} />;
+  }
+
+  const visibleNav = session
+    ? NAV.filter((n) => (n.key === 'users' ? hasPermission(session.user, 'users') : hasPermission(session.user, n.key)))
+    : [];
 
   return (
     <div className="flex h-screen text-slate-800 overflow-hidden" style={{ background: 'var(--app-bg, #f4f6fa)' }}>
@@ -154,7 +225,7 @@ export default function App() {
         {collapsed && <div className="pt-4" />}
 
         <nav className={`relative flex-1 space-y-1 overflow-y-auto custom-scroll ${collapsed ? 'px-2.5' : 'px-3'}`}>
-          {NAV.map((n) => {
+          {visibleNav.map((n) => {
             const Icon = n.icon;
             const on = page === n.key;
             const isLife = n.key === 'lifecycle';
@@ -266,14 +337,14 @@ export default function App() {
           <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5 px-1.5'}`}>
             <div className="relative shrink-0">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-[12px] font-semibold ring-2 ring-emerald-100">
-                模
+                {(session?.user.display_name || '用').slice(0, 1)}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white" />
             </div>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="text-slate-700 text-[12.5px] font-medium whitespace-nowrap">风控模型组</div>
-                <div className="text-slate-400 text-[10px] whitespace-nowrap">数据更新于 08:30</div>
+                <div className="text-slate-700 text-[12.5px] font-medium whitespace-nowrap">{session?.user.display_name}</div>
+                <div className="text-slate-400 text-[10px] whitespace-nowrap">{session?.user.role_name} · {session?.user.username}</div>
               </div>
             )}
           </div>
@@ -345,7 +416,27 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-5 custom-scroll">
+        <main className="relative flex-1 overflow-y-auto p-5 custom-scroll">
+          {/* 环境光斑：毛玻璃卡片背后的色彩来源 */}
+          <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+            <div
+              className="absolute -top-24 -left-20 w-[480px] h-[480px] rounded-full"
+              style={{ background: 'radial-gradient(circle at center, rgba(var(--brand-rgb),0.20), transparent 62%)', filter: 'blur(50px)' }}
+            />
+            <div
+              className="absolute top-[38%] -right-28 w-[420px] h-[420px] rounded-full"
+              style={{ background: 'radial-gradient(circle at center, rgba(54,201,201,0.16), transparent 62%)', filter: 'blur(56px)' }}
+            />
+            <div
+              className="absolute -bottom-28 left-[30%] w-[500px] h-[380px] rounded-full"
+              style={{ background: 'radial-gradient(circle at center, rgba(127,107,242,0.15), transparent 62%)', filter: 'blur(60px)' }}
+            />
+            <div
+              className="absolute top-[10%] left-[45%] w-[360px] h-[360px] rounded-full"
+              style={{ background: 'radial-gradient(circle at center, rgba(255,176,32,0.10), transparent 62%)', filter: 'blur(48px)' }}
+            />
+          </div>
+          <div className="relative">
           <AnimatePresence mode="wait">
             <motion.div
               key={page}
@@ -363,8 +454,10 @@ export default function App() {
               {page === 'vintage' && <Vintage />}
               {page === 'model' && <ModelScore />}
               {page === 'stability' && <Stability />}
+              {page === 'users' && session && <UsersPage currentUser={session.user} />}
             </motion.div>
           </AnimatePresence>
+          </div>
         </main>
 
         <footer className="h-8 shrink-0 flex items-center justify-center gap-2 text-[10.5px] text-slate-400 border-t border-slate-200/80 bg-white/80 backdrop-blur">
@@ -416,43 +509,6 @@ export default function App() {
               </div>
             </motion.div>
           </>
-        )}
-      </AnimatePresence>
-
-      {/* ============ 已退出登录 全屏页 ============ */}
-      <AnimatePresence>
-        {loggedOut && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex flex-col items-center justify-center"
-            style={{ background: 'var(--app-bg, #f4f6fa)' }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="flex flex-col items-center"
-            >
-              <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
-                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))', boxShadow: '0 12px 32px rgba(var(--brand-rgb),0.35)' }}
-              >
-                <ShieldCheck size={30} className="text-white" />
-              </div>
-              <div className="text-[20px] font-semibold text-slate-800">已安全退出</div>
-              <div className="text-[13px] text-slate-400 mt-2 mb-8">感谢使用风控BI监控平台</div>
-              <button
-                onClick={() => setLoggedOut(false)}
-                className="px-8 py-3 rounded-xl text-[14px] font-medium text-white transition-all hover:opacity-90 hover:shadow-lg"
-                style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-300))' }}
-              >
-                重新登录
-              </button>
-              <div className="mt-6 text-[11px] text-slate-300">演示环境 · 无真实账号体系</div>
-            </motion.div>
-          </motion.div>
         )}
       </AnimatePresence>
     </div>
