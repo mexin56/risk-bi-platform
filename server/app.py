@@ -37,6 +37,7 @@ SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]
 SAFE_PARTITION = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_RECORD_ID = re.compile(r"^[0-9a-f]{12}$")
 CACHE_SECONDS = int(os.getenv("ATTRIBUTION_CACHE_SECONDS", "900"))
+DISK_CACHE_DIR = ROOT / "data" / "attribution_cache"
 
 
 class AttributionServiceError(RuntimeError):
@@ -146,8 +147,9 @@ class AttributionService:
     def __init__(self) -> None:
         self.config = load_config()
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
-        self._path_trend_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._path_trend_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
+        self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
 
     @property
@@ -184,6 +186,30 @@ class AttributionService:
         self._partition_cache = (time.time(), result)
         return result
 
+    def partition_ranges(self) -> dict[str, dict[str, str]]:
+        """每个分区内 create_date 的 MIN/MAX, 供前端观察区间档位动态计算."""
+        cached = self._partition_range_cache
+        if cached and time.time() - cached[0] < CACHE_SECONDS:
+            return {key: dict(value) for key, value in cached[1].items()}
+        ranges: dict[str, dict[str, str]] = {}
+        date_field = self.config["date_field"]
+        for pt in self.available_partitions():
+            try:
+                rows = self._run_sql_rows(
+                    f"""
+                    SELECT MIN(TO_CHAR({date_field}, 'yyyy-MM-dd')) AS min_day,
+                           MAX(TO_CHAR({date_field}, 'yyyy-MM-dd')) AS max_day
+                    FROM {self.table_name}
+                    WHERE pt = '{pt}'
+                    """
+                )
+            except Exception:
+                continue
+            if rows and rows[0].get("min_day"):
+                ranges[pt] = {"min": rows[0]["min_day"], "max": rows[0]["max_day"]}
+        self._partition_range_cache = (time.time(), ranges)
+        return {key: dict(value) for key, value in ranges.items()}
+
     def _run_sql_rows(self, sql: str) -> list[dict[str, Any]]:
         """Pair-safe PyODPS Record extraction for compact daily aggregation results."""
         odps = self._odps()
@@ -201,26 +227,79 @@ class AttributionService:
                 rows.append(row)
         return rows
 
-    def dashboard(self, partition: str | None = None, force: bool = False) -> dict[str, Any]:
+    # ---------- 磁盘持久化缓存: 服务重启后依然秒开 ----------
+    def _disk_cache_path(self, key: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
+        return DISK_CACHE_DIR / f"{safe}.json"
+
+    def _load_disk_cache(self, key: str) -> dict[str, Any] | None:
+        path = self._disk_cache_path(key)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if time.time() - float(payload.get("_ts", 0)) < CACHE_SECONDS:
+                return payload.get("result")
+        except Exception:
+            pass
+        return None
+
+    def _save_disk_cache(self, key: str, result: dict[str, Any]) -> None:
+        try:
+            DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            payload = {"_ts": time.time(), "result": result}
+            self._disk_cache_path(key).write_text(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
         partitions = self.available_partitions()
         if not partitions:
             raise AttributionServiceError("目标表未找到可用 pt 分区。")
         selected = partition or partitions[0]
         if not SAFE_PARTITION.fullmatch(selected) or selected not in partitions:
             raise AttributionServiceError(f"分区 pt={selected} 不存在或格式不合法。")
+        offset = max(0, min(int(offset), 180))
+        cache_key = f"{selected}|{offset}"
 
         if force:
-            for cache_key in [key for key in self._path_trend_cache if key[0] == selected]:
-                self._path_trend_cache.pop(cache_key, None)
+            for key in [key for key in self._path_trend_cache if key.startswith(f"{selected}|{offset}|")]:
+                self._path_trend_cache.pop(key, None)
 
-        cached = self._cache.get(selected)
+        cached = self._cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
             result = copy.deepcopy(cached[1])
             result["meta"]["cache_hit"] = True
             return result
 
+        # 内存未命中 → 磁盘持久化缓存(服务重启后依然秒开)
+        if not force:
+            disk = self._load_disk_cache(cache_key)
+            if disk:
+                self._cache[cache_key] = (time.time(), disk)
+                result = copy.deepcopy(disk)
+                result["meta"]["cache_hit"] = True
+                return result
+
+        # force 刷新且已有旧缓存: 立即返回旧数据, 后台线程异步重算(避免用户长时间等待)
+        if force and cached:
+            result = copy.deepcopy(cached[1])
+            result["meta"]["cache_hit"] = True
+            result["meta"]["async_refresh"] = True
+            result["meta"]["generated_at"] = cached[1]["meta"]["generated_at"]
+            threading.Thread(
+                target=self._recompute,
+                args=(selected, offset),
+                daemon=True,
+                name=f"attribution-recompute-{cache_key}",
+            ).start()
+            return result
+
         with self._lock:
-            cached = self._cache.get(selected)
+            cached = self._cache.get(cache_key)
             if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
                 result = copy.deepcopy(cached[1])
                 result["meta"]["cache_hit"] = True
@@ -229,25 +308,48 @@ class AttributionService:
                 config=self.config,
                 table=self.table_name,
                 partition=selected,
+                offset=offset,
                 query_rows=self._run_sql_rows,
             )
             result = runner.run()
             result["meta"]["cache_hit"] = False
-            self._cache[selected] = (time.time(), result)
+            self._cache[cache_key] = (time.time(), result)
+            self._save_disk_cache(cache_key, result)
             return copy.deepcopy(result)
 
-    def path_trend(self, record_id: str, partition: str | None = None) -> dict[str, Any]:
+    def _recompute(self, selected: str, offset: int = 0) -> None:
+        """后台线程: 强制重算指定分区并更新缓存(force 刷新不阻塞请求)."""
+        try:
+            cache_key = f"{selected}|{offset}"
+            with self._lock:
+                runner = WarehouseAttributionRunner(
+                    config=self.config,
+                    table=self.table_name,
+                    partition=selected,
+                    offset=offset,
+                    query_rows=self._run_sql_rows,
+                )
+                result = runner.run()
+                result["meta"]["cache_hit"] = False
+                result["meta"]["async_refresh"] = False
+                self._cache[cache_key] = (time.time(), result)
+                self._save_disk_cache(cache_key, result)
+        except Exception:
+            # 后台重算失败保留旧缓存, 前端轮询超时后自然停止
+            pass
+
+    def path_trend(self, record_id: str, partition: str | None = None, offset: int = 0) -> dict[str, Any]:
         """Load only the selected server-side alert path's 15-day daily series."""
         if not SAFE_RECORD_ID.fullmatch(record_id):
             raise AttributionServiceError("预警路径标识格式不合法。")
 
-        dashboard = self.dashboard(partition=partition)
+        dashboard = self.dashboard(partition=partition, offset=offset)
         selected_partition = dashboard["meta"]["partition"]
         record = next((item for item in dashboard["merged_alerts"] if item["id"] == record_id), None)
         if record is None:
             raise AttributionServiceError("未在当前合并预警结果中找到该路径，请刷新归因结果后重试。")
 
-        cache_key = (selected_partition, record_id)
+        cache_key = f"{selected_partition}|{offset}|{record_id}"
         cached = self._path_trend_cache.get(cache_key)
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return copy.deepcopy(cached[1])
@@ -256,6 +358,7 @@ class AttributionService:
             config=self.config,
             table=self.table_name,
             partition=selected_partition,
+            offset=offset,
             query_rows=self._run_sql_rows,
         )
         result = runner.path_trend(record, dashboard["daily_trend"])
@@ -281,6 +384,8 @@ app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 def handle_error(exc: Exception) -> HTTPException:
     if isinstance(exc, AttributionServiceError):
         return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, RuntimeError) and "无可用数据" in str(exc):
+        return HTTPException(status_code=503, detail=str(exc))
     # Avoid leaking SQL text, endpoint details, or credentials to the browser.
     return HTTPException(status_code=502, detail="MaxCompute 数据读取失败，请检查服务端连接与表权限。")
 
@@ -302,7 +407,12 @@ def health(_user: dict = Depends(require_perm("attribution"))) -> dict[str, Any]
 @app.get("/api/credit-attribution/partitions")
 def partitions(_user: dict = Depends(require_perm("attribution"))) -> JSONResponse:
     try:
-        return JSONResponse(content={"partitions": service.available_partitions()})
+        return JSONResponse(
+            content={
+                "partitions": service.available_partitions(),
+                "ranges": service.partition_ranges(),
+            }
+        )
     except Exception as exc:
         raise handle_error(exc) from exc
 
@@ -311,10 +421,11 @@ def partitions(_user: dict = Depends(require_perm("attribution"))) -> JSONRespon
 def dashboard(
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
+    offset: int = Query(default=0, ge=0, le=180),
     _user: dict = Depends(require_perm("attribution")),
 ) -> JSONResponse:
     try:
-        return JSONResponse(content=json_safe(service.dashboard(partition=pt, force=force)))
+        return JSONResponse(content=json_safe(service.dashboard(partition=pt, force=force, offset=offset)))
     except Exception as exc:
         raise handle_error(exc) from exc
 
@@ -323,10 +434,11 @@ def dashboard(
 def path_trend(
     record_id: str = Query(min_length=12, max_length=12),
     pt: str | None = Query(default=None, max_length=64),
+    offset: int = Query(default=0, ge=0, le=180),
     _user: dict = Depends(require_perm("attribution")),
 ) -> JSONResponse:
     try:
-        return JSONResponse(content=json_safe(service.path_trend(record_id=record_id, partition=pt)))
+        return JSONResponse(content=json_safe(service.path_trend(record_id=record_id, partition=pt, offset=offset)))
     except Exception as exc:
         raise handle_error(exc) from exc
 

@@ -110,6 +110,9 @@ export interface AttributionDashboard {
     generated_at: string;
     note: string;
     cache_hit: boolean;
+    async_refresh?: boolean;
+    table_date_min?: string | null;
+    table_date_max?: string | null;
   };
   summary: {
     total_application_count: number;
@@ -193,19 +196,21 @@ async function getJson<T>(url: string): Promise<T> {
   return body as T;
 }
 
-export function fetchCreditAttribution(pt?: string, force = false) {
+export function fetchCreditAttribution(pt?: string, force = false, offset = 0) {
   const query = new URLSearchParams();
   if (pt) query.set('pt', pt);
   if (force) query.set('force', 'true');
+  if (offset > 0) query.set('offset', String(offset));
   return getJson<AttributionDashboard>(`/api/credit-attribution/dashboard${query.size ? `?${query}` : ''}`);
 }
 
 export function fetchAttributionPartitions() {
-  return getJson<{ partitions: string[] }>('/api/credit-attribution/partitions');
+  return getJson<{ partitions: string[]; ranges?: Record<string, { min: string; max: string }> }>('/api/credit-attribution/partitions');
 }
 
-export function fetchAttributionPathTrend(recordId: string, pt?: string) {
+export function fetchAttributionPathTrend(recordId: string, pt?: string, offset = 0) {
   const query = new URLSearchParams({ record_id: recordId });
   if (pt) query.set('pt', pt);
+  if (offset > 0) query.set('offset', String(offset));
   return getJson<AttributionPathTrend>(`/api/credit-attribution/path-trend?${query}`);
 }

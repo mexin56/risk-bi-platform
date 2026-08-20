@@ -134,3 +134,57 @@ html {
 .pulse-ring {
   animation: pulse-ring 3s ease-in-out infinite;
 }
+
+/* ==================== 主题化下拉选择框 ==================== */
+.theme-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.theme-select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translateY(-72%) rotate(45deg);
+  border-right: 1.6px solid var(--brand, #4e83fd);
+  border-bottom: 1.6px solid var(--brand, #4e83fd);
+  pointer-events: none;
+  transition: transform 0.2s ease;
+}
+.theme-select-wrap:focus-within::after {
+  transform: translateY(-28%) rotate(225deg);
+}
+.theme-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 1px solid rgba(var(--brand-rgb, 78, 131, 253), 0.28);
+  background: rgba(var(--brand-rgb, 78, 131, 253), 0.05);
+  color: #3a3f47;
+  border-radius: 9px;
+  padding: 7px 32px 7px 13px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.18s ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.theme-select:hover {
+  border-color: rgba(var(--brand-rgb, 78, 131, 253), 0.5);
+  background: rgba(var(--brand-rgb, 78, 131, 253), 0.09);
+}
+.theme-select:focus {
+  border-color: var(--brand, #4e83fd);
+  background: rgba(var(--brand-rgb, 78, 131, 253), 0.07);
+  box-shadow: 0 0 0 3px rgba(var(--brand-rgb, 78, 131, 253), 0.16);
+}
+.theme-select option {
+  color: #3a3f47;
+  background: #ffffff;
+  font-size: 12.5px;
+}

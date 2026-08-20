@@ -1,25 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EChartsOption } from 'echarts';
 import ReactECharts from 'echarts-for-react';
 import {
   AlertTriangle,
-  ArrowRight,
-  Bot,
-  CheckCircle2,
   ChevronRight,
   Database,
-  Layers3,
   LoaderCircle,
   RefreshCw,
   SearchCheck,
   ShieldAlert,
   Sparkles,
-  Target,
-  TrendingUp,
 } from 'lucide-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
-import { areaGradient, baseOption } from '@/lib/chartTheme';
+import { baseOption } from '@/lib/chartTheme';
 import { getTheme } from '@/lib/theme';
 import {
   fetchAttributionPartitions,
@@ -97,40 +91,6 @@ function SourceTag({ source }: { source: string }) {
   if (source === '专家规则') return <StatusTag text="专家规则" tone="orange" />;
   if (source.includes('专家')) return <StatusTag text="Top-K + 专家" tone="blue" />;
   return <StatusTag text="Top-K" tone="green" />;
-}
-
-function MetricTile({
-  label,
-  value,
-  detail,
-  tone = 'blue',
-  icon,
-}: {
-  label: string;
-  value: ReactNode;
-  detail: ReactNode;
-  tone?: 'blue' | 'red' | 'orange' | 'green';
-  icon: ReactNode;
-}) {
-  const colors = {
-    blue: { bg: '#eef4ff', fg: '#4e83fd', line: '#d8e6ff' },
-    red: { bg: '#fff1f2', fg: '#f43f5e', line: '#ffe0e6' },
-    orange: { bg: '#fff7ed', fg: '#f97316', line: '#ffead5' },
-    green: { bg: '#ecfdf5', fg: '#10b981', line: '#d1fae5' },
-  }[tone];
-  return (
-    <div className="relative overflow-hidden rounded-2xl border bg-white/60 backdrop-blur-xl px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]" style={{ borderColor: colors.line }}>
-      <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: colors.fg }} />
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[12px] text-slate-500">{label}</span>
-        <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: colors.bg, color: colors.fg }}>
-          {icon}
-        </span>
-      </div>
-      <div className="text-[24px] font-semibold leading-7 tracking-tight text-slate-800 tabular-nums">{value}</div>
-      <div className="mt-1.5 min-h-4 text-[10.5px] text-slate-400">{detail}</div>
-    </div>
-  );
 }
 
 function WindowCard({ metric, primary = false }: { metric: WindowMetric; primary?: boolean }) {
@@ -303,6 +263,7 @@ function SelectedPathAnalysis({
 export default function CreditAttribution() {
   const [dashboard, setDashboard] = useState<AttributionDashboard | null>(null);
   const [partitions, setPartitions] = useState<string[]>([]);
+  const [partitionRanges, setPartitionRanges] = useState<Record<string, { min: string; max: string }>>({});
   const [selectedPartition, setSelectedPartition] = useState('');
   const [selected, setSelected] = useState<AttributionRecord | null>(null);
   const [selectedTrendRecord, setSelectedTrendRecord] = useState<AttributionRecord | null>(null);
@@ -312,35 +273,67 @@ export default function CreditAttribution() {
   const [pathTrendRequest, setPathTrendRequest] = useState(0);
   const [levelFilter, setLevelFilter] = useState<number | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'topk' | 'expert'>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>('all');
+  const [dimFilter, setDimFilter] = useState<string>('all'); // 下钻层级: 单维/二级/三级
+  const [daysBack, setDaysBack] = useState(0); // 观察区间向前偏移天数(0=最新)
   const [showSuppressed, setShowSuppressed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedAnalysisRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async (force = false, pt?: string) => {
+  const load = useCallback(async (force = false, pt?: string, offset = 0) => {
     if (force) setRefreshing(true);
     else setLoading(true);
     setError(null);
-    try {
-      const payload = await fetchCreditAttribution(pt, force);
+    let asyncMode = false;
+    const apply = (payload: AttributionDashboard) => {
       setDashboard(payload);
       setSelectedPartition(payload.meta.partition);
       setSelected((current) => payload.merged_alerts.find((record) => record.canonical_path === current?.canonical_path) ?? payload.highlight ?? payload.merged_alerts[0] ?? null);
       setSelectedTrendRecord(null);
       setPathTrend(null);
       setPathTrendError(null);
+    };
+    try {
+      const payload = await fetchCreditAttribution(pt, force, offset);
+      apply(payload);
+      // 后端已返回旧缓存并启动后台重算: 轮询等待新结果(最多 12 次 × 15s)
+      if (force && payload.meta.async_refresh) {
+        asyncMode = true;
+        const baseline = payload.meta.generated_at;
+        void (async () => {
+          try {
+            for (let attempt = 0; attempt < 12; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 15000));
+              const fresh = await fetchCreditAttribution(pt, false, offset);
+              if (fresh.meta.generated_at !== baseline) {
+                apply(fresh);
+                break;
+              }
+            }
+          } catch {
+            /* 轮询失败保留当前数据 */
+          } finally {
+            setRefreshing(false);
+          }
+        })();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法获取授信归因数据');
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      if (!asyncMode) setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     void fetchAttributionPartitions()
-      .then(({ partitions: values }) => setPartitions(values))
+      .then(({ partitions: values, ranges }) => {
+        setPartitions(values);
+        setPartitionRanges(ranges ?? {});
+      })
       .catch(() => setPartitions([]));
     void load();
   }, [load]);
@@ -371,7 +364,7 @@ export default function CreditAttribution() {
     let cancelled = false;
     setPathTrendLoading(true);
     setPathTrendError(null);
-    void fetchAttributionPathTrend(selectedTrendRecord.id, dashboard.meta.partition)
+    void fetchAttributionPathTrend(selectedTrendRecord.id, dashboard.meta.partition, daysBack)
       .then((result) => {
         if (!cancelled) setPathTrend(result);
       })
@@ -383,18 +376,69 @@ export default function CreditAttribution() {
       });
 
     return () => { cancelled = true; };
-  }, [dashboard?.meta.partition, pathTrendRequest, selectedTrendRecord?.id]);
+  }, [dashboard?.meta.partition, daysBack, pathTrendRequest, selectedTrendRecord?.id]);
+
+  // 完整下钻名单: Top-K(单维Top10+二级Top5+三级预警) + 专家(单维+双维+三级全量) 全部展示, 不去重
+  const allRows = useMemo(() => {
+    if (!dashboard) return [] as AttributionRecord[];
+    const rows: AttributionRecord[] = [];
+    const push = (record: AttributionRecord) => { rows.push(record); };
+    dashboard.top_k.single_downstream.forEach(push);
+    dashboard.top_k.pair_downstream.forEach(push);
+    dashboard.top_k.third_alerts.forEach(push);
+    if (dashboard.expert.single) push(dashboard.expert.single);
+    if (dashboard.expert.pair) push(dashboard.expert.pair);
+    dashboard.expert.third_calculated.forEach(push);
+    return rows;
+  }, [dashboard]);
 
   const filteredAlerts = useMemo(() => {
-    if (!dashboard) return [];
-    return dashboard.merged_alerts.filter((record) => {
+    return allRows.filter((record) => {
       const levelMatched = levelFilter === 'all' || record.level === levelFilter;
       const sourceMatched = sourceFilter === 'all'
         || (sourceFilter === 'topk' && record.source.includes('Top-K'))
         || (sourceFilter === 'expert' && record.source.includes('专家'));
-      return levelMatched && sourceMatched;
+      const typeMatched = typeFilter === 'all' || record.anomaly_type === typeFilter;
+      const windowMatched = windowFilter === 'all' || record.primary_window === windowFilter;
+      const dimMatched = dimFilter === 'all' || record.layer === dimFilter;
+      return levelMatched && sourceMatched && typeMatched && windowMatched && dimMatched;
     });
-  }, [dashboard, levelFilter, sourceFilter]);
+  }, [allRows, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter]);
+
+  const anomalyTypes = useMemo(() => {
+    return Array.from(new Set(allRows.map((record) => record.anomaly_type))).sort();
+  }, [allRows]);
+
+  // 观察区间可选偏移: 按所选 pt 的表数据范围动态生成(每档 15 天, 窗口不能超出表范围)
+  const availableOffsets = useMemo(() => {
+    const range = partitionRanges[selectedPartition];
+    const min = range?.min ?? dashboard?.meta.table_date_min;
+    const max = range?.max ?? dashboard?.meta.table_date_max;
+    if (!min || !max) return [0];
+    const totalDays = Math.floor((Date.parse(max) - Date.parse(min)) / 86400000) + 1;
+    const options: number[] = [];
+    for (let off = 0; off < totalDays; off += 15) options.push(off);
+    return options;
+  }, [partitionRanges, selectedPartition, dashboard]);
+
+  // 观察窗口显示: 已加载完用结果日期; 切换 pt 后立即按该 pt 表范围估算最近15天窗口
+  const obsRange = useMemo(() => {
+    if (dashboard && dashboard.meta.partition === selectedPartition) {
+      return { start: dashboard.meta.date_start, end: dashboard.meta.date_end };
+    }
+    const range = partitionRanges[selectedPartition];
+    if (range?.max) {
+      const end = new Date(range.max);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 14);
+      return {
+        start: start.toISOString().slice(0, 10),
+        end: range.max,
+        pending: true,
+      };
+    }
+    return null;
+  }, [dashboard, selectedPartition, partitionRanges]);
 
   const activeTheme = getTheme();
   // 全部使用当前主题主色：柱形=主色，折线=主色深阶，区域/基准线使用同色透明阶。
@@ -403,54 +447,6 @@ export default function CreditAttribution() {
   const selectedTrendAccent = shadeHex(selectedTrendBrand, -0.42);
   const selectedTrendTint = hexWithAlpha(selectedTrendBrand, 0.10);
   const selectedTrendGuide = hexWithAlpha(selectedTrendAccent, 0.78);
-
-  const trendOption = useMemo(() => {
-    if (!dashboard) return {};
-    const trend = dashboard.daily_trend;
-    const focusName = dashboard.highlight ? `系统重点路径 · ${dashboard.highlight.conditions.at(-1)?.value ?? '重点路径'}` : '系统重点路径';
-    return {
-      ...baseOption(),
-      grid: { left: 16, right: 20, top: 38, bottom: 12, containLabel: true },
-      legend: { ...baseOption().legend, top: 2, right: 6 },
-      xAxis: { ...baseOption().xAxis, boundaryGap: false, data: trend.map((item) => formatDate(item.date)) },
-      yAxis: [
-        { ...baseOption().yAxis, name: '申请量', nameTextStyle: { color: '#8f959e', fontSize: 10 } },
-        { ...baseOption().yAxis, name: '重点路径', splitLine: { show: false }, nameTextStyle: { color: '#8f959e', fontSize: 10 } },
-      ],
-      series: [
-        {
-          name: '整体授信申请量', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2.4, color: '#4e83fd' },
-          areaStyle: { color: areaGradient('#4e83fd', 0.16) }, data: trend.map((item) => item.application_count),
-        },
-        {
-          name: 'PalmPay_IOS', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 1.8, color: '#8b5cf6', type: 'dashed' },
-          data: trend.map((item) => item.expert_seed_count),
-        },
-        {
-          name: focusName, type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 5,
-          lineStyle: { width: 2.4, color: '#f43f5e' }, itemStyle: { color: '#f43f5e' },
-          data: trend.map((item) => item.focus_path_count),
-        },
-      ],
-    };
-  }, [dashboard]);
-
-  const levelOption = useMemo(() => {
-    if (!dashboard) return {};
-    const values = [dashboard.summary.level3_count, dashboard.summary.level2_count, dashboard.summary.level1_count];
-    return {
-      ...baseOption(),
-      grid: { left: 12, right: 14, top: 20, bottom: 6, containLabel: true },
-      xAxis: { ...baseOption().xAxis, type: 'value', splitLine: { show: false }, axisLabel: { show: false } },
-      yAxis: { ...baseOption().yAxis, type: 'category', data: ['Level3 红色', 'Level2 橙色', 'Level1 黄色'], axisTick: { show: false } },
-      tooltip: { ...baseOption().tooltip, trigger: 'axis', axisPointer: { type: 'shadow' } },
-      series: [{
-        type: 'bar', data: values, barWidth: 16,
-        label: { show: true, position: 'right', color: '#64748b', fontSize: 11 },
-        itemStyle: { borderRadius: [0, 5, 5, 0], color: (params: { dataIndex: number }) => ['#f43f5e', '#f97316', '#f59e0b'][params.dataIndex] },
-      }],
-    };
-  }, [dashboard]);
 
   const selectedPathTrendOption = useMemo<EChartsOption>(() => {
     if (!pathTrend) return {};
@@ -535,12 +531,16 @@ export default function CreditAttribution() {
   const alertColumns: FeishuColumn<AttributionRecord>[] = [
     {
       key: 'level_label', title: '等级', sticky: true, width: 104,
-      render: (record) => <SeverityTag severity={record.severity} text={`L${record.level}`} />,
+      render: (record) => record.level === 0
+        ? <span className="text-[11px] text-slate-400">无预警</span>
+        : <SeverityTag severity={record.severity} text={`L${record.level}`} />,
     },
     { key: 'source', title: '来源', width: 118, render: (record) => <SourceTag source={record.source} /> },
     {
       key: 'path', title: '异常归因路径', width: 360,
-      render: (record) => (
+      render: (record) => record.level === 0 ? (
+        <span className="max-w-[340px] truncate text-slate-500" title="该路径无预警, 仅为下钻候选">{record.path}</span>
+      ) : (
         <button
           onClick={() => selectAlertPath(record)}
           className="max-w-[340px] truncate text-left font-medium text-slate-700 underline-offset-2 hover:text-blue-600 hover:underline"
@@ -577,58 +577,69 @@ export default function CreditAttribution() {
 
   if (!dashboard) return <LoadingState />;
 
-  const { summary, meta, rules } = dashboard;
-  const topKCounts = dashboard.top_k.counts;
+  const { meta, rules } = dashboard;
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 pb-2">
-      <section className="relative overflow-hidden rounded-2xl border border-blue-100 bg-white/60 backdrop-blur-xl shadow-[0_4px_18px_-10px_rgba(59,130,246,0.35)]">
-        <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-blue-500 via-violet-500 to-rose-400" />
-        <div className="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-blue-100/60 blur-3xl" />
-        <div className="relative flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg shadow-blue-200">
-              <Target size={19} />
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[17px] font-semibold tracking-tight text-slate-800">授信归因监控</h2>
-                <span className="rounded-md border border-violet-100 bg-violet-50 px-1.5 py-0.5 text-[10.5px] font-medium text-violet-600">Top-K 自动归因 × 专家规则</span>
-                <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-600"><CheckCircle2 size={12} /> MaxCompute 直连</span>
-              </div>
-              <p className="mt-1 text-[12px] text-slate-500">监控贷前授信申请量异常爆量，区分整体增长与局部画像结构性放量。</p>
-            </div>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10.5px] text-slate-500">
-              <span className="text-slate-400">观察区间 </span><span className="font-medium text-slate-700">{meta.date_start} ～ {meta.date_end}</span>
-            </div>
-            {partitions.length > 1 && (
-              <select
-                value={selectedPartition}
-                onChange={(event) => { const pt = event.target.value; setSelectedPartition(pt); void load(false, pt); }}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400"
-                aria-label="选择数据分区"
-              >
-                {partitions.map((pt) => <option key={pt} value={pt}>pt={pt}</option>)}
-              </select>
-            )}
-            <button
-              onClick={() => void load(true, selectedPartition || undefined)}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-60"
-            >
-              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? '重新计算中' : '刷新归因'}
-            </button>
-          </div>
+      {/* 工具条: 观察区间 / 分区 / 刷新 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">
+          <span className="text-slate-400">观察区间</span>
+          <span className="theme-select-wrap">
+          <select
+            value={daysBack}
+            onChange={(event) => {
+              const value = Number(event.target.value);
+              setDaysBack(value);
+              void load(false, selectedPartition || undefined, value);
+            }}
+            className="theme-select"
+            aria-label="选择观察区间"
+            title="默认展示最近15天, 可回看历史区间"
+          >
+            {availableOffsets.map((off) => (
+              <option key={off} value={off}>{off === 0 ? '最近15天' : `${off}天前`}</option>
+            ))}
+          </select>
+          </span>
+          <span className="font-medium text-slate-700 tabular-nums">{obsRange ? `${obsRange.start} ～ ${obsRange.end}` : '—'}</span>
+          {obsRange?.pending && (
+            <span className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600">
+              <LoaderCircle size={10} className="animate-spin" /> 正在加载 pt={selectedPartition} 数据…
+            </span>
+          )}
         </div>
-        <div className="relative flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-100 px-5 py-2 text-[10.5px] text-slate-400">
-          <span className="inline-flex items-center gap-1"><Database size={12} /> {meta.table}</span>
-          <span>pt={meta.partition}</span>
-          <span>{formatNumber(meta.aggregate_row_count)} 条聚合记录 · {meta.dimension_count} 个归因维度</span>
-          <span className={meta.cache_hit ? 'text-emerald-600' : 'text-blue-500'}>{meta.cache_hit ? '命中 15 分钟缓存' : '本次为最新计算结果'}</span>
+        <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">
+          <span className="text-slate-400">数据分区</span>
+          <span className="theme-select-wrap">
+          <select
+            value={selectedPartition}
+            onChange={(event) => {
+              const pt = event.target.value;
+              setSelectedPartition(pt);
+              setDaysBack(0); // 切换分区后观察区间回到最近15天, 档位按新分区范围动态生成
+              void load(false, pt, 0); // 立即按新分区加载
+            }}
+            className="theme-select"
+            aria-label="选择数据分区"
+            title="切换分区后自动按新分区重新加载"
+          >
+            {partitions.map((pt) => <option key={pt} value={pt}>pt={pt}</option>)}
+          </select>
+          </span>
         </div>
-      </section>
+        <button
+          onClick={() => void load(true, selectedPartition || undefined, daysBack)}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-60"
+        >
+          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? '重新计算中' : '刷新归因'}
+        </button>
+        <span className="inline-flex items-center gap-1 text-[10.5px] text-slate-400">
+          <Database size={12} /> {meta.table}
+        </span>
+        <span className={meta.cache_hit ? 'text-emerald-600' : 'text-blue-500'}>{meta.cache_hit ? '命中 15 分钟缓存' : '本次为最新计算结果'}</span>
+      </div>
 
       {error && (
         <div className="flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-[12px] text-orange-700">
@@ -636,61 +647,72 @@ export default function CreditAttribution() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        <MetricTile label="当日授信申请量" value={formatNumber(summary.latest_application_count)} detail={`上一日 ${formatNumber(summary.previous_application_count)} 件`} icon={<TrendingUp size={14} />} />
-        <MetricTile label="日环比变化" value={formatSignedPercent(summary.latest_day_change_pct)} detail="仅用于大盘波动观察" tone={summary.latest_day_change_pct > 0 ? 'orange' : 'green'} icon={<ArrowRight size={14} />} />
-        <MetricTile label="合并异常路径" value={formatNumber(summary.merged_alert_count)} detail={`L2+L3 共 ${summary.level2_count + summary.level3_count} 条`} tone="orange" icon={<SearchCheck size={14} />} />
-        <MetricTile label="Level3 高优先级" value={formatNumber(summary.level3_count)} detail="P0：多窗口高强度异常优先复核" tone="red" icon={<ShieldAlert size={14} />} />
-        <MetricTile label="当日审批通过率" value={`${summary.latest_approval_rate.toFixed(2)}%`} detail={`累计审批 ${formatNumber(summary.approval_count)} 件`} tone="green" icon={<CheckCircle2 size={14} />} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <ChartCard title="授信申请量与重点路径趋势" subtitle="整体申请量 · 专家一级种子 · 系统重点异常路径" accent="#4e83fd" className="xl:col-span-2">
-          <ReactECharts option={trendOption} style={{ height: 288 }} notMerge />
-        </ChartCard>
-        <ChartCard title="预警等级分布" subtitle="等级由观察量、增长、结构提升、z-score 四项同时判定" accent="#f97316">
-          <ReactECharts option={levelOption} style={{ height: 150 }} notMerge />
-          <div className="mx-4 mb-3 border-t border-slate-100 pt-3 text-[10.5px] leading-5 text-slate-400">
-            <span className="font-medium text-slate-600">v2.2 原则：</span>超额申请量只描述业务影响，<span className="font-medium text-slate-600">不参与等级升级或 Top-K 主排序</span>。
+      <ChartCard
+        title="合并预警结果"
+        subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；点击预警路径可查看下方归因解释与近15天趋势`}
+        accent="#f97316"
+      >
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+          <span className="theme-select-wrap">
+          <select
+            value={sourceFilter}
+            onChange={(event) => setSourceFilter(event.target.value as 'all' | 'topk' | 'expert')}
+            className="theme-select"
+            aria-label="按来源筛选"
+          >
+            <option value="all">全部来源</option>
+            <option value="topk">Top-K</option>
+            <option value="expert">专家</option>
+          </select>
+          </span>
+          <span className="theme-select-wrap">
+          <select
+            value={dimFilter}
+            onChange={(event) => setDimFilter(event.target.value)}
+            className="theme-select"
+            aria-label="按层级筛选"
+          >
+            <option value="all">全部层级</option>
+            <option value="单维">单维</option>
+            <option value="二级">二级</option>
+            <option value="三级">三级</option>
+          </select>
+          </span>
+          <span className="theme-select-wrap">
+          <select
+            value={typeFilter}
+            onChange={(event) => setTypeFilter(event.target.value)}
+            className="theme-select"
+            aria-label="按异常类型筛选"
+          >
+            <option value="all">全部类型</option>
+            {anomalyTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+          </span>
+          <span className="theme-select-wrap">
+          <select
+            value={windowFilter}
+            onChange={(event) => setWindowFilter(event.target.value as 'all' | '1d' | '3d' | '7d')}
+            className="theme-select"
+            aria-label="按主窗口筛选"
+          >
+            <option value="all">全部窗口</option>
+            <option value="1d">近1日</option>
+            <option value="3d">近3日</option>
+            <option value="7d">近7日</option>
+          </select>
+          </span>
+          <span className="ml-auto text-[10.5px] text-slate-400">共 {filteredAlerts.length} 条</span>
+          <div className="flex items-center gap-1.5">
+            {(['all', 3, 2, 1] as const).map((filter) => {
+              const label = filter === 'all' ? '全部等级' : `L${filter}`;
+              const active = levelFilter === filter;
+              return <button key={label} onClick={() => setLevelFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${active ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{label}</button>;
+            })}
           </div>
-        </ChartCard>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <ChartCard title="自动归因下钻链路" subtitle="全量扫描 → 严格 Top-K 下钻，避免维度组合爆炸" accent="#4e83fd" className="xl:col-span-2">
-          <div className="grid grid-cols-1 gap-3 px-3 py-3 md:grid-cols-3">
-            {[
-              { title: '单维全量扫描', value: topKCounts.single_scanned ?? 0, sub: `保留 Top${dashboard.top_k.single_downstream.length} 进入二级`, color: '#4e83fd', icon: <SearchCheck size={15} /> },
-              { title: '二级组合扫描', value: topKCounts.pair_scanned ?? 0, sub: `保留 Top${dashboard.top_k.pair_downstream.length} 进入三级`, color: '#8b5cf6', icon: <Layers3 size={15} /> },
-              { title: '三级异常输出', value: topKCounts.third_alerts ?? 0, sub: `三级已计算 ${topKCounts.third_scanned ?? 0} 条`, color: '#f97316', icon: <AlertTriangle size={15} /> },
-            ].map((item, index) => (
-              <div key={item.title} className="relative rounded-xl border border-slate-100 bg-slate-50/70 p-3.5">
-                {index < 2 && <ChevronRight size={17} className="absolute -right-[14px] top-1/2 z-10 hidden -translate-y-1/2 text-slate-300 md:block" />}
-                <div className="mb-2 flex items-center gap-2" style={{ color: item.color }}>{item.icon}<span className="text-[11px] font-medium">{item.title}</span></div>
-                <div className="text-[25px] font-semibold leading-7 text-slate-800 tabular-nums">{formatNumber(item.value)}</div>
-                <div className="mt-1 text-[10.5px] text-slate-400">{item.sub}</div>
-              </div>
-            ))}
-          </div>
-        </ChartCard>
-        <ChartCard title="专家规则兜底链路" subtitle="不受 Top-K 剪枝限制，但不改变统一预警阈值" accent="#8b5cf6">
-          <div className="px-4 py-4">
-            <div className="mb-4 flex items-center gap-2 text-violet-600"><Bot size={16} /><span className="text-[12px] font-semibold">业务重点路径</span></div>
-            <div className="space-y-2">
-              {rules.expert_path.map((step, index) => (
-                <div key={step.field} className="flex items-center gap-2 text-[11px]">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[10px] font-semibold text-violet-600">{index + 1}</span>
-                  <span className="min-w-0 truncate rounded-md border border-violet-100 bg-violet-50 px-2 py-1 text-violet-700">{step.field}={step.value === '*' ? '全量' : step.value}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
-              <div><div className="text-[10px] text-slate-400">三级全量计算</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700">{dashboard.expert.counts.third_calculated ?? 0}</div></div>
-              <div><div className="text-[10px] text-slate-400">专家发现预警</div><div className="mt-0.5 text-[17px] font-semibold text-violet-600">{dashboard.expert.counts.alerts ?? 0}</div></div>
-            </div>
-          </div>
-        </ChartCard>
-      </div>
+        </div>
+        <FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} />
+      </ChartCard>
 
       {activeRecord && (
         <div ref={selectedAnalysisRef}>
@@ -707,29 +729,6 @@ export default function CreditAttribution() {
           />
         </div>
       )}
-
-      <ChartCard
-        title="合并预警结果"
-        subtitle={`Top-K 与专家规则按“字段=取值”标准化路径去重；当前 ${dashboard.merged_alert_total} 条预警结果。点击路径可同步切换上方归因解释与近15天趋势`}
-        accent="#f97316"
-        extra={
-          <div className="flex items-center gap-1.5">
-            {(['all', 3, 2, 1] as const).map((filter) => {
-              const label = filter === 'all' ? '全部' : `L${filter}`;
-              const active = levelFilter === filter;
-              return <button key={label} onClick={() => setLevelFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${active ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{label}</button>;
-            })}
-            <span className="mx-0.5 h-4 w-px bg-slate-200" />
-            {(['all', 'topk', 'expert'] as const).map((filter) => {
-              const active = sourceFilter === filter;
-              const label = filter === 'all' ? '全部来源' : filter === 'topk' ? 'Top-K' : '专家';
-              return <button key={filter} onClick={() => setSourceFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${active ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{label}</button>;
-            })}
-          </div>
-        }
-      >
-        <FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} />
-      </ChartCard>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <ChartCard title="免归因抑制与审计" subtitle="抑制客群仍参与整体申请量、结构占比分母，但不进入候选、预警与下钻" accent="#f59e0b">
