@@ -378,17 +378,19 @@ export default function CreditAttribution() {
     return () => { cancelled = true; };
   }, [dashboard?.meta.partition, daysBack, pathTrendRequest, selectedTrendRecord?.id]);
 
-  // 完整下钻名单: Top-K(单维Top10+二级Top5+三级预警) + 专家(单维+双维+三级全量) 全部展示, 不去重
+  // 完整下钻名单: 合并预警(已去重) + 单维/二级名单中通过门槛的无预警记录(Level0 也展示)
   const allRows = useMemo(() => {
     if (!dashboard) return [] as AttributionRecord[];
+    const extras = [...dashboard.top_k.single_downstream, ...dashboard.top_k.pair_downstream].filter(
+      (record) => record.level === 0,
+    );
+    const seen = new Set<string>();
     const rows: AttributionRecord[] = [];
-    const push = (record: AttributionRecord) => { rows.push(record); };
-    dashboard.top_k.single_downstream.forEach(push);
-    dashboard.top_k.pair_downstream.forEach(push);
-    dashboard.top_k.third_alerts.forEach(push);
-    if (dashboard.expert.single) push(dashboard.expert.single);
-    if (dashboard.expert.pair) push(dashboard.expert.pair);
-    dashboard.expert.third_calculated.forEach(push);
+    for (const record of [...dashboard.merged_alerts, ...extras]) {
+      if (seen.has(record.canonical_path)) continue;
+      seen.add(record.canonical_path);
+      rows.push(record);
+    }
     return rows;
   }, [dashboard]);
 

@@ -86,8 +86,9 @@ class AttributionMetrics:
 
     @staticmethod
     def _ratio(numerator: float, denominator: float) -> float:
+        # 与 Excel 报告口径一致: 无基准(分母<=0)时按 0 参与等级判定与 Top-K 排序(而非 999 假高)
         if denominator <= 0:
-            return 999.0 if numerator > 0 else 0.0
+            return 0.0
         return numerator / denominator
 
     def _level_for_metrics(self, observation_count: float, growth_factor: float, structure_lift_factor: float, z_score: float) -> int:
@@ -117,7 +118,7 @@ class AttributionMetrics:
         structure_lift_factor = self._ratio(observation_share, baseline_share)
         expected_count = observation_total * baseline_share if baseline_total > 0 else 0.0
         excess_count = observation_count - expected_count
-        z_score = self._ratio(excess_count, math.sqrt(expected_count)) if expected_count > 0 else (999.0 if observation_count > 0 else 0.0)
+        z_score = self._ratio(excess_count, math.sqrt(expected_count)) if expected_count > 0 else 0.0
         level = self._level_for_metrics(observation_count, growth_factor, structure_lift_factor, z_score)
         return {
             "key": spec["key"],
@@ -153,8 +154,8 @@ class AttributionMetrics:
 
     @staticmethod
     def display_path(conditions: Iterable[tuple[str, str]]) -> str:
-        # 与 Excel 报告口径一致: 路径按字段名排序展示(reg_sx_days 在 register_software 前)
-        return " / ".join(sorted(f"{field}={value}" for field, value in conditions))
+        # 与最新版 Excel 报告口径一致: 路径按下钻条件顺序展示(register_software 在前)
+        return " / ".join(f"{field}={value}" for field, value in conditions)
 
     def suppression_reasons(self, conditions: Iterable[tuple[str, str]]) -> list[str]:
         lookup = dict(conditions)
@@ -172,8 +173,11 @@ class AttributionMetrics:
         enters_next_level: bool = False,
     ) -> dict[str, Any]:
         metrics = [self._window_metrics(counts, spec) for spec in self.window_specs]
+        # 主窗口选择: 与 Excel 报告口径一致 —— 排除“无基准”(基准日均=0)的窗口后再按
+        # (等级, min(增长,结构提升), z) 竞争; 全部无基准时退化为全窗口竞争
+        eligible_metrics = [item for item in metrics if float(item["baseline_daily"]) > 0]
         primary = max(
-            metrics,
+            eligible_metrics or metrics,
             key=lambda item: (
                 item["level"],
                 min(float(item["growth_factor"]), float(item["structure_lift_factor"])),
@@ -318,9 +322,12 @@ class WarehouseAttributionRunner:
         # 窗口终点 = 最近日期 - offset; 起点 = 终点 - (lookback + 2 天余量)
         end = pd.Timestamp(max_day) - pd.Timedelta(days=self.offset)
         start = end - pd.Timedelta(days=lookback + 2)
+        # 注意: create_date 为 datetime, <= TO_DATE(end) 只含当天 00:00:00 会把最后一天截掉,
+        # 必须用「小于次日」才能包含 end 当天全天
+        end_exclusive = end + pd.Timedelta(days=1)
         self._window_filter = (
             f"AND {self.date_field} >= TO_DATE('{start:%Y-%m-%d}', 'yyyy-mm-dd') "
-            f"AND {self.date_field} <= TO_DATE('{end:%Y-%m-%d}', 'yyyy-mm-dd') "
+            f"AND {self.date_field} < TO_DATE('{end_exclusive:%Y-%m-%d}', 'yyyy-mm-dd') "
         )
 
     @staticmethod
@@ -550,10 +557,19 @@ class WarehouseAttributionRunner:
         forced: bool = False,
         rule_note: str = "",
         drilldown_rule: str = "",
+        dimension_ordered: bool = False,
     ) -> list[dict[str, Any]]:
+        def build(value: str) -> list[tuple[str, str]]:
+            conditions = [*base_conditions, (field, value)]
+            if dimension_ordered:
+                # 与 Excel 报告口径一致: Top-K 路径按维度列表顺序排列字段
+                order = {name: index for index, name in enumerate(self.dimensions)}
+                conditions = sorted(conditions, key=lambda item: order.get(item[0], 99))
+            return conditions
+
         return [
             metrics.record(
-                [*base_conditions, (field, value)],
+                build(value),
                 daily,
                 source=source,
                 forced=forced,
@@ -570,9 +586,14 @@ class WarehouseAttributionRunner:
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         all_single: list[dict[str, Any]] = []
         for field in self.dimensions:
-            all_single.extend(self._evaluate_values(metrics, [], field, single_groups.get(field, {}), source="Top-K"))
+            all_single.extend(self._evaluate_values(metrics, [], field, single_groups.get(field, {}), source="Top-K", dimension_ordered=True))
         all_single = metrics.dedupe(all_single)
-        eligible_single = [record for record in all_single if not record["is_suppressed"]]
+        eligible_single = [
+            record
+            for record in all_single
+            if not record["is_suppressed"]
+            and (record["level"] > 0 or record["observation_count"] >= 30)  # v2.4: Level0 候选门槛=主排序窗口观察量≥30
+        ]
         suppressed: list[dict[str, Any]] = [record for record in all_single if record["is_suppressed"] and record["level"] > 0]
         single_seed = metrics.mark_downstream(
             metrics.sort_records(eligible_single)[: int(self.config["top_k"]["single_limit"])],
@@ -591,9 +612,14 @@ class WarehouseAttributionRunner:
                 if field in occupied:
                     continue
                 value_map = pair_groups.get(field, {}).get(record["canonical_path"], {})
-                all_pair.extend(self._evaluate_values(metrics, base_conditions, field, value_map, source="Top-K"))
+                all_pair.extend(self._evaluate_values(metrics, base_conditions, field, value_map, source="Top-K", dimension_ordered=True))
         all_pair = metrics.dedupe(all_pair)
-        eligible_pair = [record for record in all_pair if not record["is_suppressed"]]
+        eligible_pair = [
+            record
+            for record in all_pair
+            if not record["is_suppressed"]
+            and (record["level"] > 0 or record["observation_count"] >= 30)  # v2.4: Level0 候选门槛
+        ]
         suppressed.extend(record for record in all_pair if record["is_suppressed"] and record["level"] > 0)
         pair_seed = metrics.mark_downstream(
             metrics.sort_records(eligible_pair)[: int(self.config["top_k"]["pair_limit"])],
@@ -612,7 +638,7 @@ class WarehouseAttributionRunner:
                 if field in occupied:
                     continue
                 value_map = third_groups.get(field, {}).get(record["canonical_path"], {})
-                all_third.extend(self._evaluate_values(metrics, base_conditions, field, value_map, source="Top-K"))
+                all_third.extend(self._evaluate_values(metrics, base_conditions, field, value_map, source="Top-K", dimension_ordered=True))
         all_third = metrics.dedupe(all_third)
         eligible_third = [record for record in all_third if not record["is_suppressed"]]
         suppressed.extend(record for record in all_third if record["is_suppressed"] and record["level"] > 0)
@@ -631,7 +657,9 @@ class WarehouseAttributionRunner:
                 "third_alerts": [record for record in metrics.sort_records(eligible_third) if record["level"] > 0],
                 "counts": {
                     "single_scanned": len(all_single),
+                    "single_pool": len(eligible_single),  # v2.4 候选池(Level0观察量≥30后)
                     "pair_scanned": len(all_pair),
+                    "pair_pool": len(eligible_pair),
                     "third_scanned": len(all_third),
                     "single_alerts": sum(1 for record in eligible_single if record["level"] > 0),
                     "pair_alerts": sum(1 for record in eligible_pair if record["level"] > 0),
@@ -704,12 +732,24 @@ class WarehouseAttributionRunner:
 
     @staticmethod
     def _merge(metrics: AttributionMetrics, top_k_alerts: list[dict[str, Any]], expert_alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Top-K 与专家结果全部保留, 不做跨来源去重.
+        """v2.4: 合并去重——同路径(字段=取值规范化)只保留一条, 来源合并为"Top-K + 专家规则".
 
-        同一标准化路径若 Top-K 与专家规则都命中, 两条均保留展示,
-        来源分别标注, 便于审计两种机制各自的命中情况.
+        最终等级取该路径多窗口最高等级; 来源/专家强制标记/触发说明合并保留.
         """
-        return metrics.sort_records([*top_k_alerts, *expert_alerts])
+        merged: dict[str, dict[str, Any]] = {}
+        for record in [*top_k_alerts, *expert_alerts]:
+            key = record["canonical_path"]
+            current = merged.get(key)
+            if current is None:
+                merged[key] = copy.deepcopy(record)
+                continue
+            winner = metrics.sort_records([current, record])[0]
+            source_set = {current["source"], record["source"]}
+            winner["source"] = "Top-K + 专家规则" if len(source_set) > 1 else next(iter(source_set))
+            winner["is_expert_forced"] = bool(current["is_expert_forced"] or record["is_expert_forced"])
+            winner["rule_note"] = "；".join(dict.fromkeys(filter(None, [current["rule_note"], record["rule_note"]])))
+            merged[key] = winner
+        return metrics.sort_records(merged.values())
 
     def run(self) -> dict[str, Any]:
         self._resolve_window()
