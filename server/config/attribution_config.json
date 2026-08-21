@@ -1,5 +1,5 @@
 {
-  "version": "v2.2",
+  "version": "v2.4",
   "table": "pb_biz_credit.lj_sx_cnt_analysis_summary",
   "date_field": "create_date",
   "count_field": "cnt",

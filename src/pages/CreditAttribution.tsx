@@ -136,7 +136,7 @@ function LoadingState({ text = '正在从 MaxCompute 聚合授信数据…' }: {
       </div>
       <div className="text-[15px] font-semibold text-slate-700">{text}</div>
       <div className="mt-2 max-w-md text-[12px] leading-5 text-slate-400">
-        正在按 v2.2 口径运行单维全量扫描、Top-K 下钻与专家路径。首次计算通常需要约 1–2 分钟，结果将缓存 15 分钟。
+        正在按 v2.4 口径运行单维全量扫描、Top-K 下钻与专家路径。首次计算通常需要约 1–2 分钟，结果将缓存 1 小时。
       </div>
     </div>
   );
