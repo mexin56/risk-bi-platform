@@ -36,7 +36,6 @@ LOCAL_ENV_PATH = ROOT / ".env.local"
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$")
 SAFE_PARTITION = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_RECORD_ID = re.compile(r"^[0-9a-f]{12}$")
-CACHE_SECONDS = int(os.getenv("ATTRIBUTION_CACHE_SECONDS", "900"))
 DISK_CACHE_DIR = ROOT / "data" / "attribution_cache"
 
 
@@ -367,6 +366,7 @@ class AttributionService:
 
 
 load_local_env()
+CACHE_SECONDS = int(os.getenv("ATTRIBUTION_CACHE_SECONDS", "900"))
 service = AttributionService()
 app = FastAPI(title="Risk BI · Credit Attribution API", version="1.0.0")
 app.add_middleware(
