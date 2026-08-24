@@ -13,6 +13,8 @@ export interface WindowMetric {
   observation_days: number;
   baseline_count: number;
   observation_count: number;
+  approval_count: number | null;
+  approval_rate_pct: number | null;
   baseline_daily: number;
   observation_daily: number;
   baseline_share: number;
@@ -50,6 +52,7 @@ export interface AttributionRecord {
   hit_windows: string[];
   hit_window_count: number;
   observation_count: number;
+  approval_rate_pct: number | null;
   growth_factor: number;
   structure_lift_factor: number;
   z_score: number;

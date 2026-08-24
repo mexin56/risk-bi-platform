@@ -273,6 +273,20 @@ class AttributionService:
         except Exception:
             pass
 
+    def _enrich_approval(self, payload: dict[str, Any], selected: str, offset: int) -> None:
+        """读取层富化:用 path_daily 快照给 alert 补窗口通过量/通过率。
+
+        快照缺失或旧格式时字段留空(前端显示 —);任何异常都静默,
+        不影响 dashboard 主流程。
+        """
+        if serving_assemble is None or not isinstance(payload, dict):
+            return
+        try:
+            frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected, offset)
+            serving_assemble.enrich_approval_rates(payload, frame)
+        except Exception:
+            pass
+
     def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
         partitions = self.available_partitions()
         if not partitions:
@@ -297,6 +311,7 @@ class AttributionService:
         if not force:
             disk = self._load_disk_cache(cache_key)
             if disk:
+                self._enrich_approval(disk, selected, offset)
                 self._cache[cache_key] = (time.time(), disk)
                 result = copy.deepcopy(disk)
                 result["meta"]["cache_hit"] = True
@@ -306,6 +321,7 @@ class AttributionService:
         if not force and serving_assemble is not None:
             snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
             if snapshot is not None:
+                self._enrich_approval(snapshot, selected, offset)
                 self._cache[cache_key] = (time.time(), snapshot)
                 return copy.deepcopy(snapshot)
 
@@ -338,6 +354,7 @@ class AttributionService:
             )
             result = runner.run()
             result["meta"]["cache_hit"] = False
+            self._enrich_approval(result, selected, offset)
             self._cache[cache_key] = (time.time(), result)
             self._save_disk_cache(cache_key, result)
             # 兜底写回:子进程把结果发布进 DuckDB + 快照(下次就是秒读)
@@ -450,7 +467,7 @@ class AttributionService:
         # 优先读预计算路径日序列(serving 快照), 点击响应 <100ms
         if serving_assemble is not None:
             frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected_partition, offset)
-            series = serving_assemble.path_series_for_alert(frame, record_id)
+            series, approval_series = serving_assemble.path_series_for_alert(frame, record_id)
             if series is not None:
                 runner = WarehouseAttributionRunner(
                     config=self.config,
@@ -459,7 +476,7 @@ class AttributionService:
                     offset=offset,
                     query_rows=self._run_sql_rows,
                 )
-                result = runner.format_path_trend(record, dashboard["daily_trend"], series)
+                result = runner.format_path_trend(record, dashboard["daily_trend"], series, approval_series)
                 self._path_trend_cache[cache_key] = (time.time(), result)
                 return copy.deepcopy(result)
 

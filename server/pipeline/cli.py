@@ -40,7 +40,7 @@ def build_path_rows(
     runner: WarehouseAttributionRunner,
     result: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """全部预警路径(+免归因路径)的日序列,批量条件聚合一次扫完。"""
+    """全部预警路径(+免归因路径)的日序列与通过量,批量条件聚合扫完。"""
     alerts = [*result.get("merged_alerts", []), *result.get("suppressed_alerts", [])]
     condition_sets = [
         {"key": alert["id"], "conditions": alert["conditions"]} for alert in alerts
@@ -52,15 +52,17 @@ def build_path_rows(
         for row in result.get("daily_trend", [])
     }
     rows: list[dict[str, Any]] = []
-    for alert_id, series in series_map.items():
+    for alert_id, (series, approval_series) in series_map.items():
         for day, count in series.items():
             day_text = _day_text(day)
+            approval = float(approval_series.get(day, 0.0)) if len(approval_series) else None
             rows.append(
                 {
                     "alert_id": alert_id,
                     "date": day_text,
                     "application_count": float(count or 0),
                     "total_application_count": float(totals.get(day_text, 0.0) or 0),
+                    "approval_count": approval,
                 }
             )
     return rows

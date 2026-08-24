@@ -481,22 +481,44 @@ class WarehouseAttributionRunner:
         rows = self.query_rows(sql)
         return pd.Series({self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float)
 
+    def _exact_daily_with_approval(self, conditions: list[tuple[str, str]]) -> tuple[pd.Series, pd.Series]:
+        """路径级每日 申请量 + 通过量(approval_fields[0], 主通过口径)。"""
+        self._resolve_window()
+        predicates = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
+        approval_fields = [f for f in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(f)]
+        approval_expr = f", SUM({approval_fields[0]}) AS approval" if approval_fields else ""
+        sql = f"""
+            SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
+                   SUM({self.count_field}) AS cnt{approval_expr}
+            FROM {self.table}
+            WHERE pt = '{self._escape(self.partition)}' AND {predicates}
+              {self._window_filter}
+            GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
+        """
+        rows = self.query_rows(sql)
+        cnt = pd.Series({self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float)
+        approval = pd.Series(
+            {self._parse_day(row["day"]): float(row.get("approval") or 0) for row in rows}, dtype=float
+        )
+        return cnt, approval
+
     def paths_exact_daily_batch(
         self,
         condition_sets: list[dict[str, Any]],
         chunk_size: int | None = None,
-    ) -> dict[str, pd.Series]:
-        """一次(或少数几次)扫描算出全部预警路径的每日序列。
+    ) -> dict[str, tuple[pd.Series, pd.Series]]:
+        """一次(或少数几次)扫描算出全部预警路径的每日申请量与通过量。
 
         与 _grouped_for_condition_sets 同款条件聚合模式:每条路径一个
         SUM(CASE WHEN ... END) 别名,GROUP BY day;SQL 按 chunk 拆分避免
-        超长语句。返回 {key: Series(date -> cnt)}。供预计算管线使用。
+        超长语句。返回 {key: (cnt_series, approval_series)},供预计算管线。
         """
         if not condition_sets:
             return {}
         if chunk_size is None:
             chunk_size = max(20, int(os.getenv("ATTRIBUTION_PATH_CHUNK", "80")))
         merged: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
+        merged_approval: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
         for start in range(0, len(condition_sets), chunk_size):
             chunk = condition_sets[start:start + chunk_size]
             aliases: list[str] = []
@@ -526,27 +548,72 @@ class WarehouseAttributionRunner:
                     if amount:
                         bucket = merged[item["key"]]
                         bucket[day] = bucket.get(day, 0.0) + amount
-        return {key: pd.Series(days, dtype=float) for key, days in merged.items()}
+        # 通过量复用同一 WHERE 集合再扫一轮(条件聚合别名换为 approval 口径)
+        approval_fields = [f for f in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(f)]
+        if not approval_fields:
+            return {key: (pd.Series(days, dtype=float), pd.Series(dtype=float)) for key, days in merged.items()}
+        for start in range(0, len(condition_sets), chunk_size):
+            chunk = condition_sets[start:start + chunk_size]
+            aliases: list[str] = []
+            expressions: list[str] = []
+            where_conditions: list[str] = []
+            for index, item in enumerate(chunk):
+                conditions = [(part["field"], part["value"]) for part in item["conditions"]]
+                condition = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
+                alias = f"patha_{index}"
+                aliases.append(alias)
+                expressions.append(f"SUM(CASE WHEN {condition} THEN {approval_fields[0]} ELSE 0 END) AS {alias}")
+                where_conditions.append(f"({condition})")
+            sql = f"""
+                SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
+                       {', '.join(expressions)}
+                FROM {self.table}
+                WHERE pt = '{self._escape(self.partition)}'
+                  {self._window_filter}
+                  AND ({' OR '.join(where_conditions)})
+                GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
+            """
+            for row in self.query_rows(sql):
+                day = self._parse_day(row["day"])
+                for index, item in enumerate(chunk):
+                    amount = float(row.get(aliases[index]) or 0)
+                    if amount:
+                        bucket = merged_approval[item["key"]]
+                        bucket[day] = bucket.get(day, 0.0) + amount
+        return {
+            key: (pd.Series(days, dtype=float), pd.Series(merged_approval[key], dtype=float))
+            for key, days in merged.items()
+        }
 
     def path_trend(self, record: dict[str, Any], daily_context: list[dict[str, Any]]) -> dict[str, Any]:
         """在线查询该路径 15 天日序列并装配(兜底路径;预计算路径见 format_path_trend)。"""
         if not daily_context:
             raise RuntimeError("当前归因任务缺少近 15 天日期上下文。")
-        path_daily = self._exact_daily(self._conditions(record))
-        return self.format_path_trend(record, daily_context, path_daily)
+        path_daily, path_approval_daily = self._exact_daily_with_approval(self._conditions(record))
+        return self.format_path_trend(record, daily_context, path_daily, path_approval_daily)
 
     def format_path_trend(
         self,
         record: dict[str, Any],
         daily_context: list[dict[str, Any]],
         path_daily: pd.Series,
+        path_approval_daily: pd.Series | None = None,
     ) -> dict[str, Any]:
-        """纯格式化:用已取到的路径日序列组装响应(供在线/预计算两条链路复用)。"""
+        """纯格式化:用已取到的路径日序列组装响应(供在线/预计算两条链路复用)。
+
+        path_approval_daily 提供时, 每日额外输出 approval_count 与
+        approval_rate_pct(通过率 = approval_cnt / cnt);缺失时为 None
+        (旧快照降级展示)。
+        """
+        has_approval = path_approval_daily is not None and len(path_approval_daily) > 0
+        empty_approval = pd.Series(dtype=float)
+        approval_source = path_approval_daily if has_approval else empty_approval
         daily: list[dict[str, Any]] = []
         for context in daily_context:
             day = self._parse_day(context["date"])
             application_count = float(path_daily.get(day, 0.0))
             total_application_count = float(context.get("application_count") or 0.0)
+            approval_count = float(approval_source.get(day, 0.0)) if has_approval else None
             daily.append(
                 {
                     "date": day.isoformat(),
@@ -554,6 +621,12 @@ class WarehouseAttributionRunner:
                     "total_application_count": numeric(total_application_count),
                     "application_share_pct": numeric(
                         application_count / total_application_count * 100 if total_application_count else 0.0
+                    ),
+                    "approval_count": numeric(approval_count) if approval_count is not None else None,
+                    "approval_rate_pct": (
+                        numeric(approval_count / application_count * 100 if application_count > 0 else 0.0)
+                        if approval_count is not None
+                        else None
                     ),
                 }
             )
@@ -590,6 +663,7 @@ class WarehouseAttributionRunner:
                 "peak_application_count": peak["application_count"],
                 "peak_date": peak["date"],
                 "latest_application_share_pct": latest["application_share_pct"],
+                "latest_approval_rate_pct": latest["approval_rate_pct"],
             },
         }
 

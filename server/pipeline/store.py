@@ -106,9 +106,11 @@ SCHEMA_SQL = [
         date DATE NOT NULL,
         application_count DOUBLE,
         total_application_count DOUBLE,
+        approval_count DOUBLE,
         PRIMARY KEY (run_id, alert_id, date)
     )
     """,
+    # 免归因(suppressed)路径
     """
     CREATE TABLE IF NOT EXISTS attr_suppressed (
         run_id VARCHAR PRIMARY KEY,
@@ -147,6 +149,11 @@ def connect(db_path: Path) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(str(db_path))
     for statement in SCHEMA_SQL:
         conn.execute(statement)
+    # 轻量迁移:老库补列(已存在时报错被吞掉即可)
+    try:
+        conn.execute("ALTER TABLE attr_path_daily ADD COLUMN IF NOT EXISTS approval_count DOUBLE")
+    except Exception:
+        pass
     return conn
 
 
@@ -281,12 +288,13 @@ def persist_result(
         conn.execute("DELETE FROM attr_path_daily WHERE run_id = ?", [run_id])
         if path_rows:
             conn.executemany(
-                "INSERT INTO attr_path_daily VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO attr_path_daily VALUES (?, ?, ?, ?, ?, ?)",
                 [
                     [
                         run_id, row["alert_id"], _date_only(row["date"]),
                         float(row.get("application_count", 0) or 0),
                         float(row.get("total_application_count", 0) or 0),
+                        float(row["approval_count"]) if row.get("approval_count") is not None else None,
                     ]
                     for row in path_rows
                 ],

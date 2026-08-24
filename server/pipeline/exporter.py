@@ -67,7 +67,8 @@ def export_snapshot(
         )
         path_frame = conn.execute(
             """
-            SELECT alert_id, date, application_count, total_application_count
+            SELECT alert_id, date, application_count, total_application_count,
+                   approval_count
             FROM attr_path_daily WHERE run_id = ?
             ORDER BY alert_id, date
             """,

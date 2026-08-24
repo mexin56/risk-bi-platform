@@ -52,6 +52,11 @@ function formatSignedPercent(value: number | undefined | null) {
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)}%`;
 }
 
+/** 通过率显示: 快照缺失 approval 数据时为 null, 显示 — */
+function formatApprovalRate(value: number | undefined | null) {
+  return value == null ? '—' : `${value.toFixed(2)}%`;
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return '—';
   return value.slice(5).replace('-', '/');
@@ -132,8 +137,9 @@ function WindowCard({ metric, primary = false }: { metric: WindowMetric; primary
         </div>
         <SeverityTag severity={metric.severity} text={metric.level_label.replace('Level0 无预警', '无预警')} />
       </div>
-      <div className="mt-2 grid grid-cols-4 gap-2 text-[10px]">
+      <div className="mt-2 grid grid-cols-5 gap-2 text-[10px]">
         <div><div className="text-slate-400">观察量</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatNumber(metric.observation_count)}</div></div>
+        <div><div className="text-slate-400">通过率</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatApprovalRate(metric.approval_rate_pct)}</div></div>
         <div><div className="text-slate-400">增长</div><div className="mt-0.5 font-semibold tabular-nums" style={{ color: tone.text }}>{formatFactor(metric.growth_factor)}</div></div>
         <div><div className="text-slate-400">结构</div><div className="mt-0.5 font-semibold tabular-nums" style={{ color: tone.text }}>{formatFactor(metric.structure_lift_factor)}</div></div>
         <div><div className="text-slate-400">z-score</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{metric.z_score.toFixed(2)}</div></div>
@@ -585,6 +591,7 @@ export default function CreditAttribution() {
     { key: 'anomaly_type', title: '异常类型', width: 90 },
     { key: 'primary_window_label', title: '主窗口', width: 78, align: 'center' },
     { key: 'observation_count', title: '观察量', width: 82, align: 'right', render: (record) => formatNumber(record.observation_count) },
+    { key: 'approval_rate_pct', title: '通过率', width: 82, align: 'right', render: (record) => <span className="tabular-nums">{formatApprovalRate(record.approval_rate_pct)}</span> },
     { key: 'growth_factor', title: '申请增长', width: 92, align: 'right', render: (record) => formatFactor(record.growth_factor) },
     { key: 'structure_lift_factor', title: '结构提升', width: 92, align: 'right', render: (record) => formatFactor(record.structure_lift_factor) },
     { key: 'z_score', title: 'z-score', width: 76, align: 'right', render: (record) => record.z_score.toFixed(2) },
