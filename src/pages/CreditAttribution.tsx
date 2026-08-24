@@ -247,12 +247,12 @@ function SelectedPathAnalysis({
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.latest_application_count)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">较前一日</div><div className={`mt-0.5 text-[17px] font-semibold tabular-nums ${currentTrend.summary.latest_day_change_pct >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{formatSignedPercent(currentTrend.summary.latest_day_change_pct)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">15天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.peak_application_count)}</div><div className="text-[9.5px] text-slate-400">{currentTrend.summary.peak_date}</div></div>
-                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日占比</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{currentTrend.summary.latest_application_share_pct.toFixed(3)}%</div></div>
+                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{currentTrend.summary.latest_approval_rate_pct == null ? '—' : `${currentTrend.summary.latest_approval_rate_pct.toFixed(2)}%`}</div></div>
                 </div>
                 <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
-                <div className="-mt-1 flex flex-wrap gap-x-3 gap-y-1 px-3.5 pb-3 text-[10px] text-slate-400">
+                <div className="-mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 px-3.5 pb-3 text-[10px] text-slate-400">
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm" style={{ background: trendBrand }} />路径申请量</span>
-                  <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: trendAccent }} />路径占比</span>
+                  <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: trendAccent }} />通过率</span>
                   <span><i className="mr-1 inline-block h-2 w-3" style={{ background: trendTint }} />{currentTrend.primary_window.label}观察期</span>
                   <span><i className="mr-1 inline-block w-3 border-t border-dashed align-middle" style={{ borderColor: trendAccent }} />基准日均</span>
                 </div>
@@ -476,7 +476,7 @@ export default function CreditAttribution() {
     return {
       ...baseOption(),
       grid: { left: 16, right: 20, top: 38, bottom: 12, containLabel: true },
-      legend: { ...baseOption().legend, top: 2, right: 6 },
+      legend: { ...baseOption().legend, right: undefined, top: 2, left: 'center' },
       tooltip: {
         ...baseOption().tooltip,
         trigger: 'axis',
@@ -486,8 +486,10 @@ export default function CreditAttribution() {
           return [
             `<b>${point.date}</b>`,
             `路径授信申请量：<b>${formatNumber(point.application_count)}</b> 件`,
+            `路径通过量：<b>${formatNumber(point.approval_count)}</b> 件`,
             `当日整体申请量：${formatNumber(point.total_application_count)} 件`,
-            `路径占比：${point.application_share_pct.toFixed(3)}%`,
+            `通过率：<b>${point.approval_rate_pct == null ? '—' : `${point.approval_rate_pct.toFixed(2)}%`}</b>`,
+            `整体占比：${point.application_share_pct.toFixed(3)}%`,
           ].join('<br/>');
         },
       },
@@ -496,8 +498,9 @@ export default function CreditAttribution() {
         { ...baseOption().yAxis, name: '路径申请量', nameTextStyle: { color: '#8f959e', fontSize: 10 } },
         {
           ...baseOption().yAxis,
-          name: '路径占比',
+          name: '通过率',
           position: 'right',
+          min: 0,
           splitLine: { show: false },
           axisLabel: { color: '#8f959e', fontSize: 10, formatter: '{value}%' },
           nameTextStyle: { color: '#8f959e', fontSize: 10 },
@@ -534,15 +537,16 @@ export default function CreditAttribution() {
           } : undefined,
         },
         {
-          name: '路径占比',
+          name: '通过率',
           type: 'line',
           yAxisIndex: 1,
           smooth: true,
           symbol: 'circle',
           symbolSize: 5,
+          connectNulls: true,
           lineStyle: { width: 2, color: selectedTrendAccent },
           itemStyle: { color: selectedTrendAccent },
-          data: trend.map((item) => item.application_share_pct),
+          data: trend.map((item) => item.approval_rate_pct),
         },
       ],
     };
