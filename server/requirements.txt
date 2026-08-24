@@ -3,3 +3,6 @@ uvicorn[standard]>=0.27
 pyodps>=0.13.0
 pandas>=2.0
 numpy>=1.24
+duckdb>=1.0
+dagster>=1.8
+dagster-webserver>=1.8

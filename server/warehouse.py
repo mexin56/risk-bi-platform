@@ -481,16 +481,67 @@ class WarehouseAttributionRunner:
         rows = self.query_rows(sql)
         return pd.Series({self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float)
 
-    def path_trend(self, record: dict[str, Any], daily_context: list[dict[str, Any]]) -> dict[str, Any]:
-        """Return the selected alert path's daily series for the current 15-day context.
+    def paths_exact_daily_batch(
+        self,
+        condition_sets: list[dict[str, Any]],
+        chunk_size: int | None = None,
+    ) -> dict[str, pd.Series]:
+        """一次(或少数几次)扫描算出全部预警路径的每日序列。
 
-        `record` comes from the server-side dashboard cache, rather than browser-supplied
-        field values, so only configured dimensions can become SQL predicates.
+        与 _grouped_for_condition_sets 同款条件聚合模式:每条路径一个
+        SUM(CASE WHEN ... END) 别名,GROUP BY day;SQL 按 chunk 拆分避免
+        超长语句。返回 {key: Series(date -> cnt)}。供预计算管线使用。
         """
+        if not condition_sets:
+            return {}
+        if chunk_size is None:
+            chunk_size = max(20, int(os.getenv("ATTRIBUTION_PATH_CHUNK", "80")))
+        merged: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
+        for start in range(0, len(condition_sets), chunk_size):
+            chunk = condition_sets[start:start + chunk_size]
+            aliases: list[str] = []
+            expressions: list[str] = []
+            where_conditions: list[str] = []
+            for index, item in enumerate(chunk):
+                conditions = [(part["field"], part["value"]) for part in item["conditions"]]
+                condition = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
+                alias = f"path_{index}"
+                aliases.append(alias)
+                expressions.append(f"SUM(CASE WHEN {condition} THEN {self.count_field} ELSE 0 END) AS {alias}")
+                where_conditions.append(f"({condition})")
+            self._resolve_window()
+            sql = f"""
+                SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
+                       {', '.join(expressions)}
+                FROM {self.table}
+                WHERE pt = '{self._escape(self.partition)}'
+                  {self._window_filter}
+                  AND ({' OR '.join(where_conditions)})
+                GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
+            """
+            for row in self.query_rows(sql):
+                day = self._parse_day(row["day"])
+                for index, item in enumerate(chunk):
+                    amount = float(row.get(aliases[index]) or 0)
+                    if amount:
+                        bucket = merged[item["key"]]
+                        bucket[day] = bucket.get(day, 0.0) + amount
+        return {key: pd.Series(days, dtype=float) for key, days in merged.items()}
+
+    def path_trend(self, record: dict[str, Any], daily_context: list[dict[str, Any]]) -> dict[str, Any]:
+        """在线查询该路径 15 天日序列并装配(兜底路径;预计算路径见 format_path_trend)。"""
         if not daily_context:
             raise RuntimeError("当前归因任务缺少近 15 天日期上下文。")
-
         path_daily = self._exact_daily(self._conditions(record))
+        return self.format_path_trend(record, daily_context, path_daily)
+
+    def format_path_trend(
+        self,
+        record: dict[str, Any],
+        daily_context: list[dict[str, Any]],
+        path_daily: pd.Series,
+    ) -> dict[str, Any]:
+        """纯格式化:用已取到的路径日序列组装响应(供在线/预计算两条链路复用)。"""
         daily: list[dict[str, Any]] = []
         for context in daily_context:
             day = self._parse_day(context["date"])

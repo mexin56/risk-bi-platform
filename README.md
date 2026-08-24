@@ -21,6 +21,24 @@ python app.py
 
 前端通过 Vite 的 `/api` 代理访问本机 `127.0.0.1:8010` 的归因 API；API 和 MaxCompute 凭证不直接暴露给浏览器。
 
+## 授信归因预计算管线（P1 已上线）
+
+归因结果每日预计算后存入 DuckDB（`server/data/attribution.duckdb`，仅管线进程写），
+并导出 serving 快照（`server/data/serving/*.parquet`，API 只读层）。接口读取优先级：
+内存缓存 → 磁盘缓存 → serving 快照 → MaxCompute 在线兑底（兑底结果自动异步发布）。
+
+```powershell
+# 在 server/ 目录下：
+python -m pipeline.cli run                        # 计算并发布最新分区
+python -m pipeline.cli run --pt 20260823          # 指定分区
+python -m pipeline.cli run --backfill 5           # 回填最近 5 个分区
+python -m pipeline.cli status                     # 查看运行批次与快照
+```
+
+- dashboard 冷响应 ~114s → <0.5s；path-trend 点击 ~7s → <100ms。
+- `force=true` 语义：立即返回旧数据 + 后台子进程重算并重新发布（`meta.async_refresh=true`）。
+- 设计与验收详见 `design/attribution-precompute-duckdb-dagster-plan.md`（P2 将接入 Dagster 调度）。
+
 ## 登录与权限管理
 
 - 首次启动自动创建 SQLite 库（`server/data/rcbi.db`，已 Git 忽略）并初始化角色与演示账号：

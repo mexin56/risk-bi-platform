@@ -32,3 +32,10 @@ server/data/
 *.njsproj
 *.sln
 *.sw?
+
+# Dagster runtime state
+server/dagster_home/
+
+# Root one-off analysis scripts
+/_*.py
+/_*.txt

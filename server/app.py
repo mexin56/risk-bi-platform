@@ -12,8 +12,11 @@ import copy
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,13 @@ try:
     from odps import ODPS
 except ImportError:  # pragma: no cover
     ODPS = None  # type: ignore[assignment,misc]
+
+# 预计算 serving 快照层(P1):缺失/损坏时自动降级为在线计算,不阻塞启动
+try:
+    from pipeline import SERVING_DIR, assemble as serving_assemble
+except Exception:  # pragma: no cover
+    SERVING_DIR = ROOT / "data" / "serving"
+    serving_assemble = None  # type: ignore[assignment]
 
 
 ROOT = Path(__file__).resolve().parent
@@ -186,10 +196,19 @@ class AttributionService:
         return result
 
     def partition_ranges(self) -> dict[str, dict[str, str]]:
-        """每个分区内 create_date 的 MIN/MAX, 供前端观察区间档位动态计算."""
+        """每个分区内 create_date 的 MIN/MAX, 供前端观察区间档位动态计算.
+
+        优先读预计算快照(夜间管线一条 GROUP BY 刷新);快照缺失时才回退到
+        逐分区串行查询(冷启动可能耗时数十秒).
+        """
         cached = self._partition_range_cache
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return {key: dict(value) for key, value in cached[1].items()}
+        if serving_assemble is not None:
+            ranges = serving_assemble.read_partition_ranges(SERVING_DIR)
+            if ranges:
+                self._partition_range_cache = (time.time(), ranges)
+                return {key: dict(value) for key, value in ranges.items()}
         ranges: dict[str, dict[str, str]] = {}
         date_field = self.config["date_field"]
         for pt in self.available_partitions():
@@ -283,6 +302,13 @@ class AttributionService:
                 result["meta"]["cache_hit"] = True
                 return result
 
+        # 磁盘缓存过期/缺失 → 预计算 serving 快照(夜间管线发布,读取 <100ms)
+        if not force and serving_assemble is not None:
+            snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
+            if snapshot is not None:
+                self._cache[cache_key] = (time.time(), snapshot)
+                return copy.deepcopy(snapshot)
+
         # force 刷新且已有旧缓存: 立即返回旧数据, 后台线程异步重算(避免用户长时间等待)
         if force and cached:
             result = copy.deepcopy(cached[1])
@@ -314,12 +340,80 @@ class AttributionService:
             result["meta"]["cache_hit"] = False
             self._cache[cache_key] = (time.time(), result)
             self._save_disk_cache(cache_key, result)
+            # 兜底写回:子进程把结果发布进 DuckDB + 快照(下次就是秒读)
+            self._spawn_ingest(selected, offset, result)
             return copy.deepcopy(result)
 
+    def _spawn_ingest(self, selected: str, offset: int, result: dict[str, Any]) -> None:
+        """后台子进程调用管线 ingest,把在线兜底结果写入 DuckDB + 快照。
+
+        保持单写者纪律:API 进程自身不打开 DuckDB;子进程失败静默降级
+        (下次访问重试),不影响本次响应。
+        """
+        if serving_assemble is None:
+            return
+
+        def _work() -> None:
+            try:
+                tmp_dir = DISK_CACHE_DIR.parent / "tmp"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                input_path = tmp_dir / f"ingest_{uuid.uuid4().hex}.json"
+                input_path.write_text(
+                    json.dumps({"pt": selected, "offset": offset, "result": json_safe(result)}, ensure_ascii=False, default=str),
+                    encoding="utf-8",
+                )
+                flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                subprocess.Popen(
+                    [sys.executable, "-m", "pipeline.cli", "ingest", "--input", str(input_path)],
+                    cwd=str(ROOT),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=flags,
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_work, daemon=True, name="attribution-ingest").start()
+
     def _recompute(self, selected: str, offset: int = 0) -> None:
-        """后台线程: 强制重算指定分区并更新缓存(force 刷新不阻塞请求)."""
+        """后台线程:强制重算指定分区并更新缓存(force 刷新不阻塞请求).
+
+        P1 起优先走管线子进程(重算 + 发布快照);子进程不可用时回退为
+        进程内在线重算(仅更新内存/磁盘缓存,不落库).
+        """
+        cache_key = f"{selected}|{offset}"
+        if serving_assemble is not None:
+            try:
+                flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                proc = subprocess.run(
+                    [sys.executable, "-m", "pipeline.cli", "run", "--pt", selected, "--offset", str(offset)],
+                    cwd=str(ROOT),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=int(os.getenv("ATTRIBUTION_PIPELINE_TIMEOUT_SECONDS", "1200")),
+                    creationflags=flags,
+                )
+                debug_dir = DISK_CACHE_DIR.parent / "tmp"
+                try:
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    (debug_dir / "force_refresh_last.log").write_text(
+                        f"returncode={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+                if proc.returncode == 0:
+                    snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
+                    if snapshot is not None:
+                        with self._lock:
+                            self._cache[cache_key] = (time.time(), snapshot)
+                            self._save_disk_cache(cache_key, snapshot)
+                    return
+            except Exception:
+                pass  # 子进程链路失败 → 回退到进程内重算
         try:
-            cache_key = f"{selected}|{offset}"
             with self._lock:
                 runner = WarehouseAttributionRunner(
                     config=self.config,
@@ -352,6 +446,22 @@ class AttributionService:
         cached = self._path_trend_cache.get(cache_key)
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return copy.deepcopy(cached[1])
+
+        # 优先读预计算路径日序列(serving 快照), 点击响应 <100ms
+        if serving_assemble is not None:
+            frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected_partition, offset)
+            series = serving_assemble.path_series_for_alert(frame, record_id)
+            if series is not None:
+                runner = WarehouseAttributionRunner(
+                    config=self.config,
+                    table=self.table_name,
+                    partition=selected_partition,
+                    offset=offset,
+                    query_rows=self._run_sql_rows,
+                )
+                result = runner.format_path_trend(record, dashboard["daily_trend"], series)
+                self._path_trend_cache[cache_key] = (time.time(), result)
+                return copy.deepcopy(result)
 
         runner = WarehouseAttributionRunner(
             config=self.config,

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { baseOption } from '@/lib/chartTheme';
 import { getTheme } from '@/lib/theme';
 import {
@@ -72,6 +73,23 @@ function hexWithAlpha(hex: string, alpha: number) {
   const green = parseInt(normalized.slice(2, 4), 16);
   const blue = parseInt(normalized.slice(4, 6), 16);
   return `rgba(${red},${green},${blue},${alpha})`;
+}
+
+/** 鼠标悬停即放大显示完整归因路径(表格单元格默认 "..." 截断)。 */
+function PathHoverTip({ path, children }: { path: string; children: React.ReactNode }) {
+  return (
+    // 注意结构: TooltipTrigger 必须直接包裹真实 DOM 元素(asChild 链式合并事件)
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        side="top"
+        collisionPadding={12}
+        className="max-w-[560px] break-all border-slate-700 bg-slate-900/95 px-3 py-2 text-[12.5px] font-semibold leading-5 text-slate-50"
+      >
+        {path}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function SeverityTag({ severity, text }: { severity: Severity; text?: string }) {
@@ -541,15 +559,22 @@ export default function CreditAttribution() {
     {
       key: 'path', title: '异常归因路径', width: 360,
       render: (record) => record.level === 0 ? (
-        <span className="max-w-[340px] truncate text-slate-500" title="该路径无预警, 仅为下钻候选">{record.path}</span>
+        <PathHoverTip path={record.path}>
+          <span
+            className="max-w-[340px] cursor-pointer truncate text-slate-500 hover:text-slate-700"
+            title="悬停查看完整值"
+          >{record.path}</span>
+        </PathHoverTip>
       ) : (
-        <button
-          onClick={() => selectAlertPath(record)}
-          className="max-w-[340px] truncate text-left font-medium text-slate-700 underline-offset-2 hover:text-blue-600 hover:underline"
-          title="点击查看该路径近15天授信申请量趋势"
-        >
-          {record.path}
-        </button>
+        <PathHoverTip path={record.path}>
+          <button
+            onClick={() => selectAlertPath(record)}
+            className="max-w-[340px] cursor-pointer truncate text-left font-medium text-slate-700 underline-offset-2 hover:text-blue-600 hover:underline"
+            title="悬停查看完整值; 点击查看该路径近15天趋势"
+          >
+            {record.path}
+          </button>
+        </PathHoverTip>
       ),
     },
     { key: 'layer', title: '层级', width: 70, align: 'center' },
@@ -651,7 +676,7 @@ export default function CreditAttribution() {
 
       <ChartCard
         title="合并预警结果"
-        subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；点击预警路径可查看下方归因解释与近15天趋势`}
+        subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；鼠标悬停路径放大显示完整值, 点击查看该路径近15天趋势`}
         accent="#f97316"
       >
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
@@ -754,7 +779,9 @@ export default function CreditAttribution() {
                 {dashboard.suppressed_alerts.map((record) => (
                   <div key={record.id} className="flex items-center gap-2 border-b border-slate-100 px-2.5 py-2 text-[10.5px] last:border-0">
                     <SeverityTag severity={record.severity} text={`L${record.level}`} />
-                    <span className="min-w-0 flex-1 truncate text-slate-600">{record.path}</span>
+                    <PathHoverTip path={record.path}>
+                      <span className="min-w-0 flex-1 cursor-pointer truncate text-slate-600 hover:text-slate-800" title="悬停查看完整值">{record.path}</span>
+                    </PathHoverTip>
                     <span className="shrink-0 text-slate-400">{record.suppression_reasons[0]}</span>
                   </div>
                 ))}
