@@ -83,6 +83,8 @@ export interface AttributionPathTrend {
     application_count: number;
     total_application_count: number;
     application_share_pct: number;
+    approval_count: number | null;
+    approval_rate_pct: number | null;
   }>;
   summary: {
     period_days: number;
@@ -93,6 +95,7 @@ export interface AttributionPathTrend {
     peak_application_count: number;
     peak_date: string;
     latest_application_share_pct: number;
+    latest_approval_rate_pct: number | null;
   };
 }
 
