@@ -76,7 +76,11 @@ function LiveClock() {
 }
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>('overview');
+  // 分享链接支持: 初始页面从 ?page= 恢复(无参数或非法值回落大盘)
+  const [page, setPageState] = useState<PageKey>(() => {
+    const value = new URLSearchParams(window.location.search).get('page');
+    return NAV.some((n) => n.key === value) ? (value as PageKey) : 'overview';
+  });
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [themeKey, setThemeKey] = useState(getTheme().key);
@@ -86,6 +90,15 @@ export default function App() {
   const [stage, setStage] = useState<StageKey>('pre');
   const [lifeOpen, setLifeOpen] = useState(true);
   const active = NAV.find((n) => n.key === page)!;
+
+  // 页面切换同步到地址栏(page 参数), 便于直接复制链接分享
+  const setPage = (key: PageKey) => {
+    setPageState(key);
+    const url = new URL(window.location.href);
+    if (key === 'overview') url.searchParams.delete('page');
+    else url.searchParams.set('page', key);
+    window.history.replaceState(null, '', url);
+  };
 
   useEffect(() => {
     applyTheme(getTheme()); // 确保首屏 CSS 变量就位

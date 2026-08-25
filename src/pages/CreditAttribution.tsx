@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EChartsOption } from 'echarts';
 import ReactECharts from 'echarts-for-react';
+import { toPng } from 'html-to-image';
 import {
   AlertTriangle,
+  Camera,
+  Check,
   ChevronRight,
   Database,
+  Link2,
   LoaderCircle,
   RefreshCw,
   SearchCheck,
@@ -60,6 +64,43 @@ function formatApprovalRate(value: number | undefined | null) {
 function formatDate(value: string | null | undefined) {
   if (!value) return '—';
   return value.slice(5).replace('-', '/');
+}
+
+/** 分享链接白名单参数键 */
+const SHARE_KEYS = ['pt', 'offset', 'path', 'range', 'lv', 'src', 'type', 'win', 'dim'] as const;
+type ShareParams = Partial<Record<(typeof SHARE_KEYS)[number], string>>;
+
+/** 从 URL 读取分享参数(仅取白名单键) */
+function readShareParams(): ShareParams {
+  const query = new URLSearchParams(window.location.search);
+  const result: ShareParams = {};
+  for (const key of SHARE_KEYS) {
+    const value = query.get(key);
+    if (value != null && value !== '') result[key] = value;
+  }
+  return result;
+}
+
+/** 复制文本到剪贴板: 优先 Clipboard API, 局域网 HTTP 环境降级 execCommand */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 function shadeHex(hex: string, amount: number) {
@@ -320,28 +361,43 @@ function SelectedPathAnalysis({
 }
 
 export default function CreditAttribution() {
+  // 分享参数: 仅在首次挂载时读取一次, 用于还原链接携带的页面状态
+  const share = useRef(readShareParams()).current;
   const [dashboard, setDashboard] = useState<AttributionDashboard | null>(null);
   const [partitions, setPartitions] = useState<string[]>([]);
   const [partitionRanges, setPartitionRanges] = useState<Record<string, { min: string; max: string }>>({});
-  const [selectedPartition, setSelectedPartition] = useState('');
+  const [selectedPartition, setSelectedPartition] = useState(share.pt ?? '');
   const [selected, setSelected] = useState<AttributionRecord | null>(null);
   const [selectedTrendRecord, setSelectedTrendRecord] = useState<AttributionRecord | null>(null);
   const [pathTrend, setPathTrend] = useState<AttributionPathTrend | null>(null);
   const [pathTrendLoading, setPathTrendLoading] = useState(false);
   const [pathTrendError, setPathTrendError] = useState<string | null>(null);
   const [pathTrendRequest, setPathTrendRequest] = useState(0);
-  const [levelFilter, setLevelFilter] = useState<number | 'all'>('all');
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'topk' | 'expert'>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>('all');
-  const [dimFilter, setDimFilter] = useState<string>('all'); // 下钻层级: 单维/二级/三级
-  const [daysBack, setDaysBack] = useState(0); // 观察区间向前偏移天数(0=最新)
-  const [trendRange, setTrendRange] = useState(60); // 趋势视窗范围(天), 从预计算序列中切片显示
+  const [levelFilter, setLevelFilter] = useState<number | 'all'>(
+    share.lv === '1' || share.lv === '2' || share.lv === '3' ? Number(share.lv) : 'all',
+  );
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'topk' | 'expert'>(
+    share.src === 'topk' || share.src === 'expert' ? share.src : 'all',
+  );
+  const [typeFilter, setTypeFilter] = useState<string>(share.type ?? 'all');
+  const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>(
+    share.win === '1d' || share.win === '3d' || share.win === '7d' ? share.win : 'all',
+  );
+  const [dimFilter, setDimFilter] = useState<string>(share.dim ?? 'all'); // 下钻层级: 单维/二级/三级
+  const [daysBack, setDaysBack] = useState(() => {
+    const value = Number(share.offset ?? 0);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }); // 观察区间向前偏移天数(0=最新)
+  const [trendRange, setTrendRange] = useState(() => {
+    const value = Number(share.range ?? 60);
+    return [7, 15, 30, 60].includes(value) ? value : 60;
+  }); // 趋势视窗范围(天), 从预计算序列中切片显示
   const [showSuppressed, setShowSuppressed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedAnalysisRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null); // 截屏范围 = 页面内容区
 
   // 分区列表刷新: force=true 跳过服务端缓存, 用于刷新归因后立即发现上游新分区(调度延迟补数场景)
   const reloadPartitions = useCallback((force = false) => {
@@ -403,8 +459,9 @@ export default function CreditAttribution() {
 
   useEffect(() => {
     reloadPartitions(false);
-    void load();
-  }, [load, reloadPartitions]);
+    // 分享链接携带 pt/offset 时直接按参数加载, 否则服务端默认最新分区
+    void load(false, share.pt || undefined, Number(share.offset ?? 0) || 0);
+  }, [load, reloadPartitions, share]);
 
   const activeRecord = selected ?? dashboard?.highlight ?? dashboard?.merged_alerts[0] ?? null;
 
@@ -416,6 +473,15 @@ export default function CreditAttribution() {
     setPathTrendRequest((value) => value + 1);
     window.setTimeout(() => selectedAnalysisRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   }, []);
+
+  // 分享链接携带 path 时: 仪表盘就绪后自动选中该路径(含趋势加载与滚动定位)
+  useEffect(() => {
+    const pendingPath = share.path;
+    if (!pendingPath || !dashboard) return;
+    const record = dashboard.merged_alerts.find((item) => item.id === pendingPath);
+    if (record) selectAlertPath(record);
+    share.path = undefined; // 仅还原一次, 之后用户自由切换
+  }, [dashboard, selectAlertPath, share]);
 
   useEffect(() => {
     if (activeRecord && selectedTrendRecord?.id !== activeRecord.id) {
@@ -509,6 +575,61 @@ export default function CreditAttribution() {
     }
     return null;
   }, [dashboard, selectedPartition, partitionRanges]);
+
+  // ============ 分享 / 截屏 ============
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shooting, setShooting] = useState(false);
+
+  const buildShareUrl = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', 'attribution');
+    const assign = (key: string, value: string | number | null | undefined) => {
+      if (value == null || value === '' || value === 'all') url.searchParams.delete(key);
+      else url.searchParams.set(key, String(value));
+    };
+    assign('pt', selectedPartition);
+    assign('offset', daysBack > 0 ? daysBack : null);
+    assign('path', activeRecord?.id);
+    assign('range', trendRange !== 60 ? trendRange : null);
+    assign('lv', levelFilter !== 'all' ? levelFilter : null);
+    assign('src', sourceFilter);
+    assign('type', typeFilter);
+    assign('win', windowFilter);
+    assign('dim', dimFilter);
+    return url.toString();
+  }, [activeRecord?.id, daysBack, dimFilter, levelFilter, selectedPartition, sourceFilter, trendRange, typeFilter, windowFilter]);
+
+  const handleShare = useCallback(async () => {
+    const ok = await copyText(buildShareUrl());
+    if (ok) {
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 2000);
+    } else {
+      // 剪贴板不可用(如非 HTTPS 局域网)时弹出输入框让用户手动复制
+      window.prompt('复制以下链接分享给同事：', buildShareUrl());
+    }
+  }, [buildShareUrl]);
+
+  const handleScreenshot = useCallback(async () => {
+    const node = contentRef.current;
+    if (!node) return;
+    setShooting(true);
+    try {
+      const dataUrl = await toPng(node, {
+        backgroundColor: '#f4f6fa',
+        pixelRatio: 2,
+      });
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+      link.download = `授信归因_${selectedPartition || '最新'}_${stamp}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch {
+      /* 截图失败静默降级, 不阻断页面使用 */
+    } finally {
+      setShooting(false);
+    }
+  }, [selectedPartition]);
 
   const activeTheme = getTheme();
   // 全部使用当前主题主色：柱形=主色，折线=主色深阶，区域/基准线使用同色透明阶。
@@ -672,7 +793,7 @@ export default function CreditAttribution() {
   const { meta, rules } = dashboard;
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-4 pb-2">
+    <div className="mx-auto max-w-[1440px] space-y-4 pb-2" ref={contentRef}>
       {/* 工具条: 观察区间 / 分区 / 刷新 */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">
@@ -734,6 +855,28 @@ export default function CreditAttribution() {
           <Database size={12} /> {meta.table}
         </span>
         <span className={meta.cache_hit ? 'text-emerald-600' : 'text-blue-500'}>{meta.cache_hit ? '命中 15 分钟缓存' : '本次为最新计算结果'}</span>
+
+        {/* 分享 / 截屏: 推到行末 */}
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            onClick={() => void handleShare()}
+            disabled={!dashboard}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:opacity-60"
+            title="复制当前页面状态链接(含分区/筛选/选中路径), 同事打开后还原同一视角"
+          >
+            {shareCopied ? <Check size={13} className="text-emerald-500" /> : <Link2 size={13} />}
+            {shareCopied ? '已复制' : '分享'}
+          </button>
+          <button
+            onClick={() => void handleScreenshot()}
+            disabled={shooting || !dashboard}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:opacity-60"
+            title="将当前页面截图为 PNG 并下载, 可直接发给同事"
+          >
+            {shooting ? <LoaderCircle size={13} className="animate-spin" /> : <Camera size={13} />}
+            {shooting ? '生成中…' : '截屏'}
+          </button>
+        </div>
       </div>
 
       {error && (
