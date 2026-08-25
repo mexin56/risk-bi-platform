@@ -175,6 +175,8 @@ function SelectedPathAnalysis({
   trendBrand,
   trendAccent,
   trendTint,
+  trendRange,
+  onTrendRangeChange,
   onRetry,
 }: {
   record: AttributionRecord;
@@ -185,11 +187,27 @@ function SelectedPathAnalysis({
   trendBrand: string;
   trendAccent: string;
   trendTint: string;
+  trendRange: number;
+  onTrendRangeChange: (value: number) => void;
   onRetry: () => void;
 }) {
   const currentTrend = pathTrend?.record_id === record.id ? pathTrend : null;
   // 趋势覆盖天数由后端返回(period_days);旧快照未重算时自动降级显示实际天数
   const periodDays = currentTrend?.summary.period_days ?? 60;
+  // 视窗切片: 图表与汇总卡片均只统计所选范围内数据
+  const visibleDaily = currentTrend ? currentTrend.daily.slice(-trendRange) : [];
+  const visibleDays = visibleDaily.length || Math.min(trendRange, periodDays);
+  const totalApplications = visibleDaily.reduce((sum, item) => sum + item.application_count, 0);
+  const latestPoint = visibleDaily[visibleDaily.length - 1];
+  const previousPoint = visibleDaily[visibleDaily.length - 2];
+  const peakPoint = visibleDaily.reduce(
+    (max, item) => (item.application_count > max.application_count ? item : max),
+    visibleDaily[0],
+  );
+  const changePct =
+    latestPoint && previousPoint && previousPoint.application_count > 0
+      ? (latestPoint.application_count / previousPoint.application_count - 1) * 100
+      : 0;
 
   return (
     <ChartCard
@@ -221,10 +239,25 @@ function SelectedPathAnalysis({
           <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white/60 backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5">
               <div>
-                <div className="text-[12px] font-semibold text-slate-800">近{periodDays}天授信申请量趋势</div>
-                <div className="mt-0.5 text-[10px] text-slate-400">柱形为路径申请量，紫线为路径占当日整体申请量比例</div>
+                <div className="text-[12px] font-semibold text-slate-800">近{visibleDays}天授信申请量趋势</div>
+                <div className="mt-0.5 text-[10px] text-slate-400">柱形为路径申请量，折线为路径占当日整体申请量比例</div>
               </div>
-              {currentTrend && <span className="text-[10px] text-slate-400">重点窗口：<b className="font-medium text-slate-600">{currentTrend.primary_window.label}</b></span>}
+              <div className="flex shrink-0 items-center gap-2">
+                {currentTrend && <span className="text-[10px] text-slate-400">重点窗口：<b className="font-medium text-slate-600">{currentTrend.primary_window.label}</b></span>}
+                <span className="theme-select-wrap">
+                  <select
+                    value={trendRange}
+                    onChange={(event) => onTrendRangeChange(Number(event.target.value))}
+                    className="theme-select"
+                    aria-label="选择趋势显示范围"
+                    title="切换趋势视窗范围(数据仍为预计算的近60天序列)"
+                  >
+                    {[7, 15, 30, 60].map((days) => (
+                      <option key={days} value={days}>近{days}天</option>
+                    ))}
+                  </select>
+                </span>
+              </div>
             </div>
 
             {pathTrendLoading && (
@@ -251,11 +284,11 @@ function SelectedPathAnalysis({
             {!pathTrendLoading && currentTrend && (
               <>
                 <div className="grid grid-cols-2 gap-2 px-3.5 pt-3 sm:grid-cols-5">
-                  <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">{periodDays}天累计</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.period_application_count)}</div></div>
-                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.latest_application_count)}</div></div>
-                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">较前一日</div><div className={`mt-0.5 text-[17px] font-semibold tabular-nums ${currentTrend.summary.latest_day_change_pct >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{formatSignedPercent(currentTrend.summary.latest_day_change_pct)}</div></div>
-                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">{periodDays}天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.peak_application_count)}</div><div className="text-[9.5px] text-slate-400">{currentTrend.summary.peak_date}</div></div>
-                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{currentTrend.summary.latest_approval_rate_pct == null ? '—' : `${currentTrend.summary.latest_approval_rate_pct.toFixed(2)}%`}</div></div>
+                  <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">{visibleDays}天累计</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(totalApplications)}</div></div>
+                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(latestPoint?.application_count ?? 0)}</div></div>
+                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">较前一日</div><div className={`mt-0.5 text-[17px] font-semibold tabular-nums ${changePct >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{formatSignedPercent(changePct)}</div></div>
+                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">{visibleDays}天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(peakPoint?.application_count ?? 0)}</div><div className="text-[9.5px] text-slate-400">{peakPoint?.date}</div></div>
+                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{latestPoint?.approval_rate_pct == null ? '—' : `${latestPoint.approval_rate_pct.toFixed(2)}%`}</div></div>
                 </div>
                 <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
                 <div className="-mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 px-3.5 pb-3 text-[10px] text-slate-400">
@@ -303,6 +336,7 @@ export default function CreditAttribution() {
   const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>('all');
   const [dimFilter, setDimFilter] = useState<string>('all'); // 下钻层级: 单维/二级/三级
   const [daysBack, setDaysBack] = useState(0); // 观察区间向前偏移天数(0=最新)
+  const [trendRange, setTrendRange] = useState(60); // 趋势视窗范围(天), 从预计算序列中切片显示
   const [showSuppressed, setShowSuppressed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -486,9 +520,19 @@ export default function CreditAttribution() {
 
   const selectedPathTrendOption = useMemo<EChartsOption>(() => {
     if (!pathTrend) return {};
-    const trend = pathTrend.daily;
+    // 视窗切片: 只取最近 trendRange 天构建图表(数据仍来自预计算完整序列)
+    const trend = pathTrend.daily.slice(-trendRange);
     const primaryWindow = pathTrend.primary_window;
     const baselineDaily = Number(primaryWindow.baseline_daily ?? 0);
+    // 观察期标注钳制到当前视窗内, 避免分类轴上出现不存在的日期
+    const clampToRange = (value: string | null): string | null => {
+      if (!value || !trend.length) return null;
+      if (value <= trend[0].date) return trend[0].date;
+      if (value >= trend[trend.length - 1].date) return trend[trend.length - 1].date;
+      return value;
+    };
+    const areaStart = clampToRange(primaryWindow.observation_start);
+    const areaEnd = clampToRange(primaryWindow.observation_end);
     return {
       ...baseOption(),
       grid: { left: 16, right: 20, top: 38, bottom: 12, containLabel: true },
@@ -542,13 +586,13 @@ export default function CreditAttribution() {
             label: { color: selectedTrendAccent, fontSize: 10, formatter: `基准日均 ${baselineDaily.toFixed(1)}` },
             data: [{ yAxis: baselineDaily }],
           } : undefined,
-          markArea: primaryWindow.observation_start && primaryWindow.observation_end ? {
+          markArea: areaStart && areaEnd && areaStart <= areaEnd ? {
             silent: true,
             itemStyle: { color: selectedTrendTint },
             label: { color: selectedTrendAccent, fontSize: 10, formatter: `${primaryWindow.label}观察期` },
             data: [[
-              { xAxis: formatDate(primaryWindow.observation_start) },
-              { xAxis: formatDate(primaryWindow.observation_end) },
+              { xAxis: formatDate(areaStart) },
+              { xAxis: formatDate(areaEnd) },
             ]],
           } : undefined,
         },
@@ -566,7 +610,7 @@ export default function CreditAttribution() {
         },
       ],
     };
-  }, [activeTheme.key, pathTrend, selectedTrendAccent, selectedTrendBrand, selectedTrendGuide, selectedTrendHover, selectedTrendTint]);
+  }, [activeTheme.key, pathTrend, selectedTrendAccent, selectedTrendBrand, selectedTrendGuide, selectedTrendHover, selectedTrendTint, trendRange]);
 
   const alertColumns: FeishuColumn<AttributionRecord>[] = [
     {
@@ -776,6 +820,8 @@ export default function CreditAttribution() {
             trendBrand={selectedTrendBrand}
             trendAccent={selectedTrendAccent}
             trendTint={selectedTrendTint}
+            trendRange={trendRange}
+            onTrendRangeChange={setTrendRange}
             onRetry={() => setPathTrendRequest((value) => value + 1)}
           />
         </div>
