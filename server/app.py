@@ -424,6 +424,9 @@ class AttributionService:
                 if proc.returncode == 0:
                     snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
                     if snapshot is not None:
+                        # 管线快照未经读取层富化: 入缓存前补齐窗口级/记录级通过率,
+                        # 否则内存缓存命中分支会返回无通过率字段的载荷
+                        self._enrich_approval(snapshot, selected, offset)
                         with self._lock:
                             self._cache[cache_key] = (time.time(), snapshot)
                             self._save_disk_cache(cache_key, snapshot)
@@ -442,6 +445,8 @@ class AttributionService:
                 result = runner.run()
                 result["meta"]["cache_hit"] = False
                 result["meta"]["async_refresh"] = False
+                # 与同步计算路径保持一致: 重算结果入缓存前先富化通过率
+                self._enrich_approval(result, selected, offset)
                 self._cache[cache_key] = (time.time(), result)
                 self._save_disk_cache(cache_key, result)
         except Exception:
