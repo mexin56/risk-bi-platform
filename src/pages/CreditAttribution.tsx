@@ -307,6 +307,18 @@ export default function CreditAttribution() {
   const [error, setError] = useState<string | null>(null);
   const selectedAnalysisRef = useRef<HTMLDivElement>(null);
 
+  // 分区列表刷新: force=true 跳过服务端缓存, 用于刷新归因后立即发现上游新分区(调度延迟补数场景)
+  const reloadPartitions = useCallback((force = false) => {
+    void fetchAttributionPartitions(force)
+      .then(({ partitions: values, ranges }) => {
+        setPartitions(values);
+        setPartitionRanges(ranges ?? {});
+      })
+      .catch(() => {
+        /* 保留现有分区列表 */
+      });
+  }, []);
+
   const load = useCallback(async (force = false, pt?: string, offset = 0) => {
     if (force) setRefreshing(true);
     else setLoading(true);
@@ -334,6 +346,7 @@ export default function CreditAttribution() {
               const fresh = await fetchCreditAttribution(pt, false, offset);
               if (fresh.meta.generated_at !== baseline) {
                 apply(fresh);
+                reloadPartitions(true); // 重算可能包含新发现分区, 同步更新下拉选项
                 break;
               }
             }
@@ -353,14 +366,9 @@ export default function CreditAttribution() {
   }, []);
 
   useEffect(() => {
-    void fetchAttributionPartitions()
-      .then(({ partitions: values, ranges }) => {
-        setPartitions(values);
-        setPartitionRanges(ranges ?? {});
-      })
-      .catch(() => setPartitions([]));
+    reloadPartitions(false);
     void load();
-  }, [load]);
+  }, [load, reloadPartitions]);
 
   const activeRecord = selected ?? dashboard?.highlight ?? dashboard?.merged_alerts[0] ?? null;
 
@@ -667,7 +675,10 @@ export default function CreditAttribution() {
           </span>
         </div>
         <button
-          onClick={() => void load(true, selectedPartition || undefined, daysBack)}
+          onClick={() => {
+            void load(true, selectedPartition || undefined, daysBack);
+            reloadPartitions(true); // 强制重新发现分区: 上游补数后无需重启即可选到新 pt
+          }}
           disabled={refreshing}
           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-60"
         >

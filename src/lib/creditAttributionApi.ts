@@ -210,8 +210,9 @@ export function fetchCreditAttribution(pt?: string, force = false, offset = 0) {
   return getJson<AttributionDashboard>(`/api/credit-attribution/dashboard${query.size ? `?${query}` : ''}`);
 }
 
-export function fetchAttributionPartitions() {
-  return getJson<{ partitions: string[]; ranges?: Record<string, { min: string; max: string }> }>('/api/credit-attribution/partitions');
+export function fetchAttributionPartitions(force = false) {
+  const query = force ? '?force=true' : '';
+  return getJson<{ partitions: string[]; ranges?: Record<string, { min: string; max: string }> }>(`/api/credit-attribution/partitions${query}`);
 }
 
 export function fetchAttributionPathTrend(recordId: string, pt?: string, offset = 0) {

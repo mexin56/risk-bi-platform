@@ -195,6 +195,11 @@ class AttributionService:
         self._partition_cache = (time.time(), result)
         return result
 
+    def refresh_partitions(self) -> list[str]:
+        """清空分区缓存后重新发现(上游补数/调度延迟时, 前端刷新即可见到新分区)."""
+        self._partition_cache = None
+        return self.available_partitions()
+
     def partition_ranges(self) -> dict[str, dict[str, str]]:
         """每个分区内 create_date 的 MIN/MAX, 供前端观察区间档位动态计算.
 
@@ -401,35 +406,56 @@ class AttributionService:
         cache_key = f"{selected}|{offset}"
         if serving_assemble is not None:
             try:
+                # 调度延迟场景: 先重新发现分区, 若上游已产出比当前更新的分区则一并重算发布,
+                # 这样点「刷新归因」即可补上缺失的每日快照, 无需等夜间调度
+                try:
+                    latest = self.refresh_partitions()[0]
+                except Exception:
+                    latest = selected
+                # 当前分区先算(前端轮询的是它), 新分区追加在后
+                targets = [selected]
+                if latest > selected and latest not in targets:
+                    targets.append(latest)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                proc = subprocess.run(
-                    [sys.executable, "-m", "pipeline.cli", "run", "--pt", selected, "--offset", str(offset)],
-                    cwd=str(ROOT),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=int(os.getenv("ATTRIBUTION_PIPELINE_TIMEOUT_SECONDS", "1200")),
-                    creationflags=flags,
-                )
+                ok_targets: list[str] = []
+                proc = None
+                for target_pt in targets:
+                    t_off = offset if target_pt == selected else 0
+                    proc = subprocess.run(
+                        [sys.executable, "-m", "pipeline.cli", "run", "--pt", target_pt, "--offset", str(t_off)],
+                        cwd=str(ROOT),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=int(os.getenv("ATTRIBUTION_PIPELINE_TIMEOUT_SECONDS", "1200")),
+                        creationflags=flags,
+                    )
+                    if proc.returncode == 0:
+                        ok_targets.append(target_pt)
                 debug_dir = DISK_CACHE_DIR.parent / "tmp"
                 try:
                     debug_dir.mkdir(parents=True, exist_ok=True)
                     (debug_dir / "force_refresh_last.log").write_text(
-                        f"returncode={proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}",
+                        f"targets={targets} ok={ok_targets}\nreturncode={proc.returncode if proc else 'n/a'}\n"
+                        f"--- stdout ---\n{proc.stdout if proc else ''}\n--- stderr ---\n{proc.stderr if proc else ''}",
                         encoding="utf-8",
                     )
                 except Exception:
                     pass
-                if proc.returncode == 0:
-                    snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
-                    if snapshot is not None:
-                        # 管线快照未经读取层富化: 入缓存前补齐窗口级/记录级通过率,
-                        # 否则内存缓存命中分支会返回无通过率字段的载荷
-                        self._enrich_approval(snapshot, selected, offset)
-                        with self._lock:
-                            self._cache[cache_key] = (time.time(), snapshot)
-                            self._save_disk_cache(cache_key, snapshot)
+                # 只要请求的分区成功就入缓存返回; 追加的新分区失败不影响主流程
+                if selected in ok_targets:
+                    for target_pt in ok_targets:
+                        t_off = offset if target_pt == selected else 0
+                        t_key = f"{target_pt}|{t_off}"
+                        snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, target_pt, t_off)
+                        if snapshot is not None:
+                            # 管线快照未经读取层富化: 入缓存前补齐窗口级/记录级通过率,
+                            # 否则内存缓存命中分支会返回无通过率字段的载荷
+                            self._enrich_approval(snapshot, target_pt, t_off)
+                            with self._lock:
+                                self._cache[t_key] = (time.time(), snapshot)
+                                self._save_disk_cache(t_key, snapshot)
                     return
             except Exception:
                 pass  # 子进程链路失败 → 回退到进程内重算
@@ -537,11 +563,11 @@ def health(_user: dict = Depends(require_perm("attribution"))) -> dict[str, Any]
 
 
 @app.get("/api/credit-attribution/partitions")
-def partitions(_user: dict = Depends(require_perm("attribution"))) -> JSONResponse:
+def partitions(force: bool = False, _user: dict = Depends(require_perm("attribution"))) -> JSONResponse:
     try:
         return JSONResponse(
             content={
-                "partitions": service.available_partitions(),
+                "partitions": service.refresh_partitions() if force else service.available_partitions(),
                 "ranges": service.partition_ranges(),
             }
         )
