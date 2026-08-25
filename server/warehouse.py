@@ -287,6 +287,7 @@ class WarehouseAttributionRunner:
         self.count_field = config["count_field"]
         self.workers = max(1, min(int(os.getenv("ATTRIBUTION_QUERY_WORKERS", "8")), 8))
         self._window_filter = ""  # 观察窗口裁剪子句, 由 _resolve_window() 初始化
+        self._trend_filter = ""  # 路径趋势扩展窗口(trend_days)裁剪子句, 与观察窗口解耦
 
     def _resolve_window(self) -> None:
         """定位最近日期并生成观察窗口裁剪子句, 避免每条SQL全分区扫描.
@@ -308,6 +309,7 @@ class WarehouseAttributionRunner:
         lookback = int(self.config.get("lookback_days", 15))
         if max_day is None:
             self._window_filter = ""
+            self._trend_filter = ""
             return
         # 表内数据范围(供前端观察区间选项与无数据提示)
         self._table_date_max = max_day
@@ -327,6 +329,14 @@ class WarehouseAttributionRunner:
         end_exclusive = end + pd.Timedelta(days=1)
         self._window_filter = (
             f"AND {self.date_field} >= TO_DATE('{start:%Y-%m-%d}', 'yyyy-mm-dd') "
+            f"AND {self.date_field} < TO_DATE('{end_exclusive:%Y-%m-%d}', 'yyyy-mm-dd') "
+        )
+        # 路径趋势扩展窗口(默认近60天): 仅用于路径日序列预计算与在线兑底,
+        # 不影响预警扫描的观察窗口口径
+        trend_days = int(self.config.get("trend_days", 60))
+        trend_start = end - pd.Timedelta(days=trend_days + 2)
+        self._trend_filter = (
+            f"AND {self.date_field} >= TO_DATE('{trend_start:%Y-%m-%d}', 'yyyy-mm-dd') "
             f"AND {self.date_field} < TO_DATE('{end_exclusive:%Y-%m-%d}', 'yyyy-mm-dd') "
         )
 
@@ -482,7 +492,10 @@ class WarehouseAttributionRunner:
         return pd.Series({self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float)
 
     def _exact_daily_with_approval(self, conditions: list[tuple[str, str]]) -> tuple[pd.Series, pd.Series]:
-        """路径级每日 申请量 + 通过量(approval_fields[0], 主通过口径)。"""
+        """路径级每日 申请量 + 通过量(approval_fields[0], 主通过口径)。
+
+        使用趋势扩展窗口(trend_days), 与预警观察窗口解耦。
+        """
         self._resolve_window()
         predicates = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
         approval_fields = [f for f in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(f)]
@@ -492,7 +505,7 @@ class WarehouseAttributionRunner:
                    SUM({self.count_field}) AS cnt{approval_expr}
             FROM {self.table}
             WHERE pt = '{self._escape(self.partition)}' AND {predicates}
-              {self._window_filter}
+              {self._trend_filter}
             GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
         """
         rows = self.query_rows(sql)
@@ -537,7 +550,7 @@ class WarehouseAttributionRunner:
                        {', '.join(expressions)}
                 FROM {self.table}
                 WHERE pt = '{self._escape(self.partition)}'
-                  {self._window_filter}
+                  {self._trend_filter}
                   AND ({' OR '.join(where_conditions)})
                 GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
             """
@@ -569,7 +582,7 @@ class WarehouseAttributionRunner:
                        {', '.join(expressions)}
                 FROM {self.table}
                 WHERE pt = '{self._escape(self.partition)}'
-                  {self._window_filter}
+                  {self._trend_filter}
                   AND ({' OR '.join(where_conditions)})
                 GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
             """
@@ -585,10 +598,34 @@ class WarehouseAttributionRunner:
             for key, days in merged.items()
         }
 
-    def path_trend(self, record: dict[str, Any], daily_context: list[dict[str, Any]]) -> dict[str, Any]:
-        """在线查询该路径 15 天日序列并装配(兜底路径;预计算路径见 format_path_trend)。"""
-        if not daily_context:
-            raise RuntimeError("当前归因任务缺少近 15 天日期上下文。")
+    def trend_daily_totals(self) -> pd.Series:
+        """整体每日申请量(趋势扩展窗口, 不带路径条件), 供趋势上下文与预计算总量列。"""
+        self._resolve_window()
+        if not self._trend_filter:
+            return pd.Series(dtype=float)
+        rows = self.query_rows(
+            f"""
+            SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
+                   SUM({self.count_field}) AS cnt
+            FROM {self.table}
+            WHERE pt = '{self._escape(self.partition)}'
+              {self._trend_filter}
+            GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
+            """
+        )
+        return pd.Series(
+            {self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float
+        )
+
+    def path_trend(self, record: dict[str, Any]) -> dict[str, Any]:
+        """在线查询该路径近 trend_days 天日序列并装配(兜底路径;预计算路径见 format_path_trend)。"""
+        totals = self.trend_daily_totals()
+        if totals.empty:
+            raise RuntimeError("当前归因任务缺少近 60 天日期上下文。")
+        daily_context = [
+            {"date": day.isoformat(), "application_count": float(count)}
+            for day, count in sorted(totals.items())
+        ]
         path_daily, path_approval_daily = self._exact_daily_with_approval(self._conditions(record))
         return self.format_path_trend(record, daily_context, path_daily, path_approval_daily)
 

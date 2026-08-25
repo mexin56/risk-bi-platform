@@ -188,10 +188,12 @@ function SelectedPathAnalysis({
   onRetry: () => void;
 }) {
   const currentTrend = pathTrend?.record_id === record.id ? pathTrend : null;
+  // 趋势覆盖天数由后端返回(period_days);旧快照未重算时自动降级显示实际天数
+  const periodDays = currentTrend?.summary.period_days ?? 60;
 
   return (
     <ChartCard
-      title="选中路径 · 归因解释与近15天趋势"
+      title="选中路径 · 归因解释与近60天趋势"
       subtitle="点击下方合并预警表中的路径，趋势和三个观察窗口会同步切换"
       accent={SEVERITY[record.severity].dot}
       extra={<div className="flex items-center gap-2"><SourceTag source={record.source} /><SeverityTag severity={record.severity} text={record.level_label} /></div>}
@@ -219,7 +221,7 @@ function SelectedPathAnalysis({
           <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white/60 backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5">
               <div>
-                <div className="text-[12px] font-semibold text-slate-800">近15天授信申请量趋势</div>
+                <div className="text-[12px] font-semibold text-slate-800">近{periodDays}天授信申请量趋势</div>
                 <div className="mt-0.5 text-[10px] text-slate-400">柱形为路径申请量，紫线为路径占当日整体申请量比例</div>
               </div>
               {currentTrend && <span className="text-[10px] text-slate-400">重点窗口：<b className="font-medium text-slate-600">{currentTrend.primary_window.label}</b></span>}
@@ -228,7 +230,7 @@ function SelectedPathAnalysis({
             {pathTrendLoading && (
               <div className="flex h-[350px] flex-col items-center justify-center gap-2 text-[12px] text-slate-400">
                 <LoaderCircle size={20} className="animate-spin text-blue-500" />
-                正在聚合该路径近 15 天申请量…
+                正在聚合该路径近 60 天申请量…
               </div>
             )}
 
@@ -249,10 +251,10 @@ function SelectedPathAnalysis({
             {!pathTrendLoading && currentTrend && (
               <>
                 <div className="grid grid-cols-2 gap-2 px-3.5 pt-3 sm:grid-cols-5">
-                  <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">15天累计</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.period_application_count)}</div></div>
+                  <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">{periodDays}天累计</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.period_application_count)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.latest_application_count)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">较前一日</div><div className={`mt-0.5 text-[17px] font-semibold tabular-nums ${currentTrend.summary.latest_day_change_pct >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{formatSignedPercent(currentTrend.summary.latest_day_change_pct)}</div></div>
-                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">15天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.peak_application_count)}</div><div className="text-[9.5px] text-slate-400">{currentTrend.summary.peak_date}</div></div>
+                  <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">{periodDays}天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(currentTrend.summary.peak_application_count)}</div><div className="text-[9.5px] text-slate-400">{currentTrend.summary.peak_date}</div></div>
                   <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{currentTrend.summary.latest_approval_rate_pct == null ? '—' : `${currentTrend.summary.latest_approval_rate_pct.toFixed(2)}%`}</div></div>
                 </div>
                 <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
@@ -532,7 +534,7 @@ export default function CreditAttribution() {
             symbolSize: 38,
             label: { color: '#fff', fontSize: 10, formatter: '峰值' },
             itemStyle: { color: selectedTrendAccent },
-            data: [{ type: 'max', name: '15天峰值' }],
+            data: [{ type: 'max', name: '60天峰值' }],
           },
           markLine: baselineDaily > 0 ? {
             symbol: 'none',

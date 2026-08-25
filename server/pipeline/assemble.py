@@ -92,6 +92,24 @@ def path_series_for_alert(
     return application, approval
 
 
+def build_trend_context(frame: pd.DataFrame | None, limit: int = 60) -> list[dict[str, Any]]:
+    """从 path_daily 快照构建路径趋势日上下文 [{date, application_count}]。
+
+    - application_count 为当日整体申请量(快照各行 total 列相同, 取首个非空值)
+    - 按日期升序返回最后 limit 天; 旧快照仅覆盖 15 天时自动降级,
+      前端 period_days 动态显示实际天数, 重算后自然扩展到 trend_days
+    """
+    if frame is None or frame.empty:
+        return []
+    grouped = frame.groupby("date")["total_application_count"].max().dropna().sort_index()
+    if grouped.empty:
+        return []
+    return [
+        {"date": day.isoformat(), "application_count": float(count)}
+        for day, count in list(grouped.items())[-int(limit):]
+    ]
+
+
 def enrich_approval_rates(dashboard: dict[str, Any], frame: pd.DataFrame | None) -> dict[str, Any]:
     """用 path_daily 快照给 alert 记录补窗口级通过量/通过率(读取层富化, 幂等)。
 

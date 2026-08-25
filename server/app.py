@@ -412,10 +412,15 @@ class AttributionService:
                     latest = self.refresh_partitions()[0]
                 except Exception:
                     latest = selected
-                # 当前分区先算(前端轮询的是它), 新分区追加在后
+                # 当前分区先算(前端轮询的是它), 新分区追加在后;
+                # 新分区已有 path_daily 快照时跳过(避免每次刷新都重复重算)
                 targets = [selected]
                 if latest > selected and latest not in targets:
-                    targets.append(latest)
+                    has_snapshot = (
+                        Path(SERVING_DIR) / f"path_daily_{latest}_0.parquet"
+                    ).exists()
+                    if not has_snapshot:
+                        targets.append(latest)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 ok_targets: list[str] = []
                 proc = None
@@ -507,7 +512,10 @@ class AttributionService:
                     offset=offset,
                     query_rows=self._run_sql_rows,
                 )
-                result = runner.format_path_trend(record, dashboard["daily_trend"], series, approval_series)
+                # 趋势上下文从快照自身日期范围构建(重算后覆盖近 trend_days 天;
+                # 旧快照仅 15 天时自动降级展示实际天数)
+                context = serving_assemble.build_trend_context(frame)
+                result = runner.format_path_trend(record, context, series, approval_series)
                 self._path_trend_cache[cache_key] = (time.time(), result)
                 return copy.deepcopy(result)
 
@@ -518,7 +526,7 @@ class AttributionService:
             offset=offset,
             query_rows=self._run_sql_rows,
         )
-        result = runner.path_trend(record, dashboard["daily_trend"])
+        result = runner.path_trend(record)
         self._path_trend_cache[cache_key] = (time.time(), result)
         return copy.deepcopy(result)
 

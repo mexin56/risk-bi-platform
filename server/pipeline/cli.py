@@ -40,16 +40,20 @@ def build_path_rows(
     runner: WarehouseAttributionRunner,
     result: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """全部预警路径(+免归因路径)的日序列与通过量,批量条件聚合扫完。"""
+    """全部预警路径(+免归因路径)的日序列与通过量,批量条件聚合扫完。
+
+    覆盖范围 = 趋势扩展窗口(trend_days, 默认60天), 与预警观察窗口解耦;
+    总量列为同期整体每日申请量(供前端占比线)。
+    """
     alerts = [*result.get("merged_alerts", []), *result.get("suppressed_alerts", [])]
     condition_sets = [
         {"key": alert["id"], "conditions": alert["conditions"]} for alert in alerts
     ]
     series_map = runner.paths_exact_daily_batch(condition_sets)
+    totals_series = runner.trend_daily_totals()
     totals = {
-        row.get("date") if isinstance(row.get("date"), str) else _day_text(row.get("date")):
-        float(row.get("application_count") or 0)
-        for row in result.get("daily_trend", [])
+        _day_text(day): float(count or 0)
+        for day, count in totals_series.items()
     }
     rows: list[dict[str, Any]] = []
     for alert_id, (series, approval_series) in series_map.items():
