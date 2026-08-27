@@ -292,6 +292,23 @@ class AttributionService:
         except Exception:
             pass
 
+    @staticmethod
+    def _generated_at(payload: dict[str, Any] | None) -> str:
+        """结果生成时间(ISO 字符串可直接按字典序比较);缺失时视为最旧。"""
+        if not isinstance(payload, dict):
+            return ""
+        meta = payload.get("meta")
+        return str(meta.get("generated_at") or "") if isinstance(meta, dict) else ""
+
+    def _adopt_serving_snapshot(self, snapshot: dict[str, Any], selected: str, offset: int, cache_key: str) -> dict[str, Any]:
+        """采纳管线刚发布的 serving 快照, 覆盖旧缓存并清除对应路径趋势缓存。"""
+        self._enrich_approval(snapshot, selected, offset)
+        self._cache[cache_key] = (time.time(), snapshot)
+        self._save_disk_cache(cache_key, snapshot)
+        for key in [key for key in self._path_trend_cache if key.startswith(f"{selected}|{offset}|")]:
+            self._path_trend_cache.pop(key, None)
+        return snapshot
+
     def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
         partitions = self.available_partitions()
         if not partitions:
@@ -308,27 +325,38 @@ class AttributionService:
 
         cached = self._cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            # 管线可能在 API 进程外发布了新快照: 不能让 15 分钟内存缓存遮住新数据
+            if serving_assemble is not None:
+                snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
+                if snapshot is not None and self._generated_at(snapshot) > self._generated_at(cached[1]):
+                    result = copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
+                    result["meta"]["cache_hit"] = True
+                    return result
             result = copy.deepcopy(cached[1])
             result["meta"]["cache_hit"] = True
             return result
 
-        # 内存未命中 → 磁盘持久化缓存(服务重启后依然秒开)
+        # 内存未命中: serving 快照与磁盘缓存都可能存在, 按 generated_at 取最新。
+        # serving 是管线发布的权威产物, 先比对避免旧磁盘缓存遮住刚发布的数据。
         if not force:
             disk = self._load_disk_cache(cache_key)
+            snapshot = (
+                serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
+                if serving_assemble is not None
+                else None
+            )
+            if snapshot is not None and (
+                disk is None or self._generated_at(snapshot) >= self._generated_at(disk)
+            ):
+                result = copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
+                result["meta"]["cache_hit"] = True
+                return result
             if disk:
                 self._enrich_approval(disk, selected, offset)
                 self._cache[cache_key] = (time.time(), disk)
                 result = copy.deepcopy(disk)
                 result["meta"]["cache_hit"] = True
                 return result
-
-        # 磁盘缓存过期/缺失 → 预计算 serving 快照(夜间管线发布,读取 <100ms)
-        if not force and serving_assemble is not None:
-            snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
-            if snapshot is not None:
-                self._enrich_approval(snapshot, selected, offset)
-                self._cache[cache_key] = (time.time(), snapshot)
-                return copy.deepcopy(snapshot)
 
         # force 刷新且已有旧缓存: 立即返回旧数据, 后台线程异步重算(避免用户长时间等待)
         if force and cached:
