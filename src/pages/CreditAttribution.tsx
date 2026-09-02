@@ -549,7 +549,7 @@ export default function CreditAttribution() {
     } finally {
       setSavingRuleStatus(null);
     }
-  }, []);
+  }, [dashboard?.meta.partition, selectedPartition]);
 
   // 分享链接携带 path 时: 仪表盘就绪后自动选中该路径(含趋势加载与滚动定位)
   useEffect(() => {
