@@ -23,11 +23,13 @@ import { getTheme } from '@/lib/theme';
 import {
   fetchAttributionPartitions,
   fetchAttributionPathTrend,
+  fetchAttributionRuleStatusHistory,
   fetchCreditAttribution,
   updateAttributionRuleStatus,
   type AttributionDashboard,
   type AttributionPathTrend,
   type AttributionRecord,
+  type AttributionRuleStatusHistory,
   type RuleStatus,
   type Severity,
   type WindowMetric,
@@ -51,10 +53,13 @@ const RULE_STATUS_OPTIONS: Array<{ value: RuleStatus; label: string }> = [
   { value: 2, label: '持续观察' },
 ];
 
-const RULE_STATUS_TABS: Array<{ value: RuleStatus; label: string }> = [
+type RuleStatusTab = RuleStatus | 'history';
+
+const RULE_STATUS_TABS: Array<{ value: RuleStatusTab; label: string }> = [
   { value: 0, label: '发现规则' },
   { value: 1, label: '已上策略' },
   { value: 2, label: '持续观察监控' },
+  { value: 'history', label: '打标记录' },
 ];
 
 function formatNumber(value: number | undefined | null) {
@@ -401,8 +406,11 @@ export default function CreditAttribution() {
   const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>(
     share.win === '1d' || share.win === '3d' || share.win === '7d' ? share.win : 'all',
   );
-  const [ruleStatusTab, setRuleStatusTab] = useState<RuleStatus>(0);
+  const [ruleStatusTab, setRuleStatusTab] = useState<RuleStatusTab>(0);
   const [savingRuleStatus, setSavingRuleStatus] = useState<string | null>(null);
+  const [statusHistory, setStatusHistory] = useState<AttributionRuleStatusHistory[]>([]);
+  const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
+  const [statusHistoryError, setStatusHistoryError] = useState<string | null>(null);
   const [dimFilter, setDimFilter] = useState<string>(share.dim ?? 'all'); // 下钻层级: 单维/二级/三级
   const [daysBack, setDaysBack] = useState(() => {
     const value = Number(share.offset ?? 0);
@@ -492,6 +500,23 @@ export default function CreditAttribution() {
     void load(false, share.pt || undefined, Number(share.offset ?? 0) || 0);
   }, [load, reloadPartitions, share]);
 
+  const loadStatusHistory = useCallback(async () => {
+    setStatusHistoryLoading(true);
+    setStatusHistoryError(null);
+    try {
+      const { records } = await fetchAttributionRuleStatusHistory();
+      setStatusHistory(records);
+    } catch (err) {
+      setStatusHistoryError(err instanceof Error ? err.message : '无法加载打标记录');
+    } finally {
+      setStatusHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStatusHistory();
+  }, [loadStatusHistory]);
+
   const activeRecord = selected ?? dashboard?.highlight ?? dashboard?.merged_alerts[0] ?? null;
 
   const selectAlertPath = useCallback((record: AttributionRecord) => {
@@ -544,12 +569,13 @@ export default function CreditAttribution() {
       } : current);
       setSelected((current) => current ? applyStatus(current) : current);
       setSelectedTrendRecord((current) => current ? applyStatus(current) : current);
+      await loadStatusHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : '规则状态更新失败');
     } finally {
       setSavingRuleStatus(null);
     }
-  }, [dashboard?.meta.partition, selectedPartition]);
+  }, [dashboard?.meta.partition, loadStatusHistory, selectedPartition]);
 
   // 分享链接携带 path 时: 仪表盘就绪后自动选中该路径(含趋势加载与滚动定位)
   useEffect(() => {
@@ -606,6 +632,7 @@ export default function CreditAttribution() {
   }, [dashboard]);
 
   const filteredAlerts = useMemo(() => {
+    if (ruleStatusTab === 'history') return [];
     return allRows.filter((record) => {
       // Discovery always shows the current pt's abnormal rows, regardless of
       // whether the same rule is already marked as strategy/observation.
@@ -625,12 +652,11 @@ export default function CreditAttribution() {
   }, [allRows, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter, ruleStatusTab]);
 
   const ruleStatusCounts = useMemo(() => {
-    return RULE_STATUS_TABS.reduce<Record<RuleStatus, number>>((counts, tab) => {
-      counts[tab.value] = tab.value === 0
-        ? allRows.filter((record) => !record.is_tracked_only).length
-        : allRows.filter((record) => (record.status ?? 0) === tab.value).length;
-      return counts;
-    }, { 0: 0, 1: 0, 2: 0 });
+    return {
+      0: allRows.filter((record) => !record.is_tracked_only).length,
+      1: allRows.filter((record) => (record.status ?? 0) === 1).length,
+      2: allRows.filter((record) => (record.status ?? 0) === 2).length,
+    } satisfies Record<RuleStatus, number>;
   }, [allRows]);
 
   const anomalyTypes = useMemo(() => {
@@ -860,7 +886,7 @@ export default function CreditAttribution() {
         </select>
       ),
     },
-    ...(ruleStatusTab === 0 ? [] : [actionDateColumn]),
+    ...(ruleStatusTab === 1 || ruleStatusTab === 2 ? [actionDateColumn] : []),
     {
       key: 'level_label', title: '等级', sticky: true, width: 104,
       render: (record) => record.level === 0
@@ -899,6 +925,18 @@ export default function CreditAttribution() {
     { key: 'structure_lift_factor', title: '结构提升', width: 92, align: 'right', render: (record) => formatFactor(record.structure_lift_factor) },
     { key: 'z_score', title: 'z-score', width: 76, align: 'right', render: (record) => record.z_score.toFixed(2) },
     { key: 'excess_count', title: '超额量(辅助)', width: 108, align: 'right', render: (record) => `${record.excess_count >= 0 ? '+' : ''}${formatNumber(record.excess_count)}` },
+  ];
+
+  const statusHistoryColumns: FeishuColumn<AttributionRuleStatusHistory>[] = [
+    { key: 'status', title: '标记状态', width: 104, render: (row) => row.status === 1 ? '已上策略' : '持续观察' },
+    { key: 'canonical_path', title: '异常归因路径', width: 360 },
+    { key: 'entered_pt', title: '进入 pt', width: 104, align: 'center' },
+    { key: 'entered_at', title: '进入时间', width: 168 },
+    { key: 'entered_by', title: '进入操作人', width: 112 },
+    { key: 'exited_pt', title: '移出 pt', width: 104, align: 'center', render: (row) => row.exited_pt ?? '—' },
+    { key: 'exited_at', title: '移出时间', width: 168, render: (row) => row.exited_at ?? '—' },
+    { key: 'exited_by', title: '移出操作人', width: 112, render: (row) => row.exited_by ?? '—' },
+    { key: 'is_active', title: '当前状态', width: 96, align: 'center', render: (row) => row.is_active ? '进行中' : '已结束' },
   ];
 
   if (loading && !dashboard) return <LoadingState />;
@@ -1031,12 +1069,34 @@ export default function CreditAttribution() {
               >
                 {tab.label}
                 <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${active ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
-                  {ruleStatusCounts[tab.value]}
+                  {tab.value === 'history' ? statusHistory.length : ruleStatusCounts[tab.value]}
                 </span>
               </button>
             );
           })}
         </div>
+        {ruleStatusTab === 'history' ? (
+          <>
+            {statusHistoryError && (
+              <div className="flex flex-wrap items-center gap-2 px-4 pb-2 pt-3 text-[12px] text-rose-600">
+                <AlertTriangle size={15} /> 加载打标记录失败：{statusHistoryError}
+                <button onClick={() => void loadStatusHistory()} className="rounded-lg bg-rose-50 px-3 py-1.5 font-medium text-rose-600 hover:bg-rose-100">重试</button>
+              </div>
+            )}
+            {statusHistoryLoading && (
+              <div className="flex min-h-[180px] items-center justify-center gap-2 text-[12px] text-slate-400">
+                <LoaderCircle size={18} className="animate-spin text-blue-500" /> 正在加载打标记录…
+              </div>
+            )}
+            {!statusHistoryLoading && !statusHistoryError && statusHistory.length === 0 && (
+              <div className="flex min-h-[180px] items-center justify-center text-[12px] text-slate-400">暂无打标记录</div>
+            )}
+            {!statusHistoryLoading && statusHistory.length > 0 && (
+              <FeishuTable columns={statusHistoryColumns} data={statusHistory} maxHeight={470} rowKey={(row) => String(row.id)} />
+            )}
+          </>
+        ) : (
+        <>
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
           <span className="theme-select-wrap">
           <select
@@ -1097,6 +1157,8 @@ export default function CreditAttribution() {
           </div>
         </div>
         <FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} />
+        </>
+        )}
       </ChartCard>
 
       {activeRecord && (
