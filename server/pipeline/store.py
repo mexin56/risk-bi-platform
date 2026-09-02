@@ -86,6 +86,7 @@ SCHEMA_SQL = [
         structure_change DOUBLE,
         expected_count DOUBLE, excess_count DOUBLE, z_score DOUBLE,
         level INTEGER, level_label VARCHAR, severity VARCHAR,
+        cid_cnt DOUBLE, approval_cid_cnt DOUBLE, cid_approval_rate_pct DOUBLE,
         PRIMARY KEY (run_id, alert_id, window_key)
     )
     """,
@@ -94,6 +95,7 @@ SCHEMA_SQL = [
         run_id VARCHAR NOT NULL,
         date DATE NOT NULL,
         application_count DOUBLE, approval_count DOUBLE,
+        cid_cnt DOUBLE, approval_cid_cnt DOUBLE,
         expert_seed_count DOUBLE, focus_path_count DOUBLE,
         PRIMARY KEY (run_id, date)
     )
@@ -107,6 +109,8 @@ SCHEMA_SQL = [
         application_count DOUBLE,
         total_application_count DOUBLE,
         approval_count DOUBLE,
+        cid_cnt DOUBLE,
+        approval_cid_cnt DOUBLE,
         PRIMARY KEY (run_id, alert_id, date)
     )
     """,
@@ -152,6 +156,13 @@ def connect(db_path: Path) -> duckdb.DuckDBPyConnection:
     # 轻量迁移:老库补列(已存在时报错被吞掉即可)
     try:
         conn.execute("ALTER TABLE attr_path_daily ADD COLUMN IF NOT EXISTS approval_count DOUBLE")
+        conn.execute("ALTER TABLE attr_daily_trend ADD COLUMN IF NOT EXISTS cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_daily_trend ADD COLUMN IF NOT EXISTS approval_cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_path_daily ADD COLUMN IF NOT EXISTS cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_path_daily ADD COLUMN IF NOT EXISTS approval_cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_alert_windows ADD COLUMN IF NOT EXISTS cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_alert_windows ADD COLUMN IF NOT EXISTS approval_cid_cnt DOUBLE")
+        conn.execute("ALTER TABLE attr_alert_windows ADD COLUMN IF NOT EXISTS cid_approval_rate_pct DOUBLE")
     except Exception:
         pass
     return conn
@@ -256,6 +267,9 @@ def persist_result(
                         float(window.get("expected_count", 0) or 0), float(window.get("excess_count", 0) or 0),
                         float(window.get("z_score", 0) or 0),
                         int(window.get("level", 0) or 0), window.get("level_label"), window.get("severity"),
+                        float(window["cid_cnt"]) if window.get("cid_cnt") is not None else None,
+                        float(window["approval_cid_cnt"]) if window.get("approval_cid_cnt") is not None else None,
+                        float(window["cid_approval_rate_pct"]) if window.get("cid_approval_rate_pct") is not None else None,
                     ]
                 )
         if alert_rows:
@@ -265,7 +279,7 @@ def persist_result(
             )
         if window_rows:
             conn.executemany(
-                "INSERT INTO attr_alert_windows VALUES (" + ",".join(["?"] * 27) + ")",
+                "INSERT INTO attr_alert_windows VALUES (" + ",".join(["?"] * 30) + ")",
                 window_rows,
             )
 
@@ -275,6 +289,8 @@ def persist_result(
                 run_id, _date_only(row.get("date")),
                 float(row.get("application_count", 0) or 0),
                 float(row.get("approval_count", 0) or 0),
+                float(row.get("cid_cnt", 0) or 0),
+                float(row.get("approval_cid_cnt", 0) or 0),
                 float(row.get("expert_seed_count", 0) or 0),
                 float(row.get("focus_path_count", 0) or 0),
             ]
@@ -282,19 +298,25 @@ def persist_result(
         ]
         if trend_rows:
             conn.executemany(
-                "INSERT INTO attr_daily_trend VALUES (?, ?, ?, ?, ?, ?)", trend_rows
+                "INSERT INTO attr_daily_trend "
+                "(run_id, date, application_count, approval_count, cid_cnt, approval_cid_cnt, expert_seed_count, focus_path_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", trend_rows
             )
 
         conn.execute("DELETE FROM attr_path_daily WHERE run_id = ?", [run_id])
         if path_rows:
             conn.executemany(
-                "INSERT INTO attr_path_daily VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO attr_path_daily "
+                "(run_id, alert_id, date, application_count, total_application_count, approval_count, cid_cnt, approval_cid_cnt) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     [
                         run_id, row["alert_id"], _date_only(row["date"]),
                         float(row.get("application_count", 0) or 0),
                         float(row.get("total_application_count", 0) or 0),
                         float(row["approval_count"]) if row.get("approval_count") is not None else None,
+                        float(row["cid_cnt"]) if row.get("cid_cnt") is not None else None,
+                        float(row["approval_cid_cnt"]) if row.get("approval_cid_cnt") is not None else None,
                     ]
                     for row in path_rows
                 ],

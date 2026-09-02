@@ -285,6 +285,8 @@ class WarehouseAttributionRunner:
         self.dimensions = list(config["dimensions"])
         self.date_field = config["date_field"]
         self.count_field = config["count_field"]
+        self.cid_count_field = config.get("cid_count_field", "cid_cnt")
+        self.cid_approval_field = config.get("cid_approval_field", "approval_cid_cnt")
         self.workers = max(1, min(int(os.getenv("ATTRIBUTION_QUERY_WORKERS", "8")), 8))
         self._window_filter = ""  # 观察窗口裁剪子句, 由 _resolve_window() 初始化
         self._trend_filter = ""  # 路径趋势扩展窗口(trend_days)裁剪子句, 与观察窗口解耦
@@ -365,11 +367,17 @@ class WarehouseAttributionRunner:
         self._resolve_window()
         approval_fields = [field for field in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(field)]
         approval_sql = ", ".join(f"SUM({field}) AS {field}" for field in approval_fields)
+        cid_fields = [
+            field for field in (self.cid_count_field, self.cid_approval_field)
+            if SAFE_FIELD.fullmatch(field)
+        ]
+        cid_sql = ", ".join(f"SUM({field}) AS {field}" for field in cid_fields)
         sql = f"""
             SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
                    SUM({self.count_field}) AS application_count,
                    COUNT(1) AS aggregate_row_count
                    {', ' + approval_sql if approval_sql else ''}
+                   {', ' + cid_sql if cid_sql else ''}
             FROM {self.table}
             WHERE pt = '{self._escape(self.partition)}'
               {self._window_filter}
@@ -491,7 +499,9 @@ class WarehouseAttributionRunner:
         rows = self.query_rows(sql)
         return pd.Series({self._parse_day(row["day"]): float(row.get("cnt") or 0) for row in rows}, dtype=float)
 
-    def _exact_daily_with_approval(self, conditions: list[tuple[str, str]]) -> tuple[pd.Series, pd.Series]:
+    def _exact_daily_with_approval(
+        self, conditions: list[tuple[str, str]]
+    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
         """路径级每日 申请量 + 通过量(approval_fields[0], 主通过口径)。
 
         使用趋势扩展窗口(trend_days), 与预警观察窗口解耦。
@@ -500,9 +510,14 @@ class WarehouseAttributionRunner:
         predicates = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
         approval_fields = [f for f in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(f)]
         approval_expr = f", SUM({approval_fields[0]}) AS approval" if approval_fields else ""
+        cid_expr = (
+            f", SUM({self.cid_count_field}) AS cid_cnt, SUM({self.cid_approval_field}) AS approval_cid_cnt"
+            if SAFE_FIELD.fullmatch(self.cid_count_field) and SAFE_FIELD.fullmatch(self.cid_approval_field)
+            else ""
+        )
         sql = f"""
             SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
-                   SUM({self.count_field}) AS cnt{approval_expr}
+                   SUM({self.count_field}) AS cnt{approval_expr}{cid_expr}
             FROM {self.table}
             WHERE pt = '{self._escape(self.partition)}' AND {predicates}
               {self._trend_filter}
@@ -513,13 +528,19 @@ class WarehouseAttributionRunner:
         approval = pd.Series(
             {self._parse_day(row["day"]): float(row.get("approval") or 0) for row in rows}, dtype=float
         )
-        return cnt, approval
+        cid = pd.Series(
+            {self._parse_day(row["day"]): float(row.get("cid_cnt") or 0) for row in rows}, dtype=float
+        )
+        approval_cid = pd.Series(
+            {self._parse_day(row["day"]): float(row.get("approval_cid_cnt") or 0) for row in rows}, dtype=float
+        )
+        return cnt, approval, cid, approval_cid
 
     def paths_exact_daily_batch(
         self,
         condition_sets: list[dict[str, Any]],
         chunk_size: int | None = None,
-    ) -> dict[str, tuple[pd.Series, pd.Series]]:
+    ) -> dict[str, tuple[pd.Series, pd.Series, pd.Series, pd.Series]]:
         """一次(或少数几次)扫描算出全部预警路径的每日申请量与通过量。
 
         与 _grouped_for_condition_sets 同款条件聚合模式:每条路径一个
@@ -532,6 +553,8 @@ class WarehouseAttributionRunner:
             chunk_size = max(20, int(os.getenv("ATTRIBUTION_PATH_CHUNK", "80")))
         merged: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
         merged_approval: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
+        merged_cid: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
+        merged_approval_cid: dict[str, dict[Any, float]] = {item["key"]: {} for item in condition_sets}
         for start in range(0, len(condition_sets), chunk_size):
             chunk = condition_sets[start:start + chunk_size]
             aliases: list[str] = []
@@ -563,8 +586,12 @@ class WarehouseAttributionRunner:
                         bucket[day] = bucket.get(day, 0.0) + amount
         # 通过量复用同一 WHERE 集合再扫一轮(条件聚合别名换为 approval 口径)
         approval_fields = [f for f in self.config.get("approval_fields", []) if SAFE_FIELD.fullmatch(f)]
-        if not approval_fields:
-            return {key: (pd.Series(days, dtype=float), pd.Series(dtype=float)) for key, days in merged.items()}
+        has_cid_fields = SAFE_FIELD.fullmatch(self.cid_count_field) and SAFE_FIELD.fullmatch(self.cid_approval_field)
+        if not approval_fields and not has_cid_fields:
+            return {
+                key: (pd.Series(days, dtype=float), pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float))
+                for key, days in merged.items()
+            }
         for start in range(0, len(condition_sets), chunk_size):
             chunk = condition_sets[start:start + chunk_size]
             aliases: list[str] = []
@@ -575,9 +602,11 @@ class WarehouseAttributionRunner:
                 condition = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
                 alias = f"patha_{index}"
                 aliases.append(alias)
-                expressions.append(f"SUM(CASE WHEN {condition} THEN {approval_fields[0]} ELSE 0 END) AS {alias}")
+                if approval_fields:
+                    expressions.append(f"SUM(CASE WHEN {condition} THEN {approval_fields[0]} ELSE 0 END) AS {alias}")
                 where_conditions.append(f"({condition})")
-            sql = f"""
+            if approval_fields:
+                sql = f"""
                 SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
                        {', '.join(expressions)}
                 FROM {self.table}
@@ -585,16 +614,58 @@ class WarehouseAttributionRunner:
                   {self._trend_filter}
                   AND ({' OR '.join(where_conditions)})
                 GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
-            """
-            for row in self.query_rows(sql):
-                day = self._parse_day(row["day"])
+                """
+                for row in self.query_rows(sql):
+                    day = self._parse_day(row["day"])
+                    for index, item in enumerate(chunk):
+                        amount = float(row.get(aliases[index]) or 0)
+                        if amount:
+                            bucket = merged_approval[item["key"]]
+                            bucket[day] = bucket.get(day, 0.0) + amount
+        if has_cid_fields:
+            for start in range(0, len(condition_sets), chunk_size):
+                chunk = condition_sets[start:start + chunk_size]
+                aliases = []
+                expressions = []
+                where_conditions = []
                 for index, item in enumerate(chunk):
-                    amount = float(row.get(aliases[index]) or 0)
-                    if amount:
-                        bucket = merged_approval[item["key"]]
-                        bucket[day] = bucket.get(day, 0.0) + amount
+                    conditions = [(part["field"], part["value"]) for part in item["conditions"]]
+                    condition = " AND ".join(self._condition_sql(field, value) for field, value in conditions)
+                    alias = f"pathc_{index}"
+                    approval_alias = f"pathca_{index}"
+                    aliases.append((alias, approval_alias))
+                    expressions.extend([
+                        f"SUM(CASE WHEN {condition} THEN {self.cid_count_field} ELSE 0 END) AS {alias}",
+                        f"SUM(CASE WHEN {condition} THEN {self.cid_approval_field} ELSE 0 END) AS {approval_alias}",
+                    ])
+                    where_conditions.append(f"({condition})")
+                sql = f"""
+                    SELECT TO_CHAR({self.date_field}, 'yyyy-MM-dd') AS day,
+                           {', '.join(expressions)}
+                    FROM {self.table}
+                    WHERE pt = '{self._escape(self.partition)}'
+                      {self._trend_filter}
+                      AND ({' OR '.join(where_conditions)})
+                    GROUP BY TO_CHAR({self.date_field}, 'yyyy-MM-dd')
+                """
+                for row in self.query_rows(sql):
+                    day = self._parse_day(row["day"])
+                    for index, item in enumerate(chunk):
+                        cid_amount = float(row.get(aliases[index][0]) or 0)
+                        approval_cid_amount = float(row.get(aliases[index][1]) or 0)
+                        if cid_amount:
+                            bucket = merged_cid[item["key"]]
+                            bucket[day] = bucket.get(day, 0.0) + cid_amount
+                        if approval_cid_amount:
+                            bucket = merged_approval_cid[item["key"]]
+                            bucket[day] = bucket.get(day, 0.0) + approval_cid_amount
         return {
-            key: (pd.Series(days, dtype=float), pd.Series(merged_approval[key], dtype=float))
+            key: (
+                pd.Series(days, dtype=float),
+                pd.Series(merged_approval[key], dtype=float),
+                pd.Series(merged_cid[key], dtype=float),
+                pd.Series(merged_approval_cid[key], dtype=float),
+            )
             for key, days in merged.items()
         }
 
@@ -626,8 +697,8 @@ class WarehouseAttributionRunner:
             {"date": day.isoformat(), "application_count": float(count)}
             for day, count in sorted(totals.items())
         ]
-        path_daily, path_approval_daily = self._exact_daily_with_approval(self._conditions(record))
-        return self.format_path_trend(record, daily_context, path_daily, path_approval_daily)
+        path_daily, path_approval_daily, path_cid_daily, path_approval_cid_daily = self._exact_daily_with_approval(self._conditions(record))
+        return self.format_path_trend(record, daily_context, path_daily, path_approval_daily, path_cid_daily, path_approval_cid_daily)
 
     def format_path_trend(
         self,
@@ -635,6 +706,8 @@ class WarehouseAttributionRunner:
         daily_context: list[dict[str, Any]],
         path_daily: pd.Series,
         path_approval_daily: pd.Series | None = None,
+        path_cid_daily: pd.Series | None = None,
+        path_approval_cid_daily: pd.Series | None = None,
     ) -> dict[str, Any]:
         """纯格式化:用已取到的路径日序列组装响应(供在线/预计算两条链路复用)。
 
@@ -645,12 +718,17 @@ class WarehouseAttributionRunner:
         has_approval = path_approval_daily is not None and len(path_approval_daily) > 0
         empty_approval = pd.Series(dtype=float)
         approval_source = path_approval_daily if has_approval else empty_approval
+        has_cid = path_cid_daily is not None and len(path_cid_daily) > 0
+        cid_source = path_cid_daily if has_cid else empty_approval
+        approval_cid_source = path_approval_cid_daily if path_approval_cid_daily is not None else empty_approval
         daily: list[dict[str, Any]] = []
         for context in daily_context:
             day = self._parse_day(context["date"])
             application_count = float(path_daily.get(day, 0.0))
             total_application_count = float(context.get("application_count") or 0.0)
             approval_count = float(approval_source.get(day, 0.0)) if has_approval else None
+            cid_count = float(cid_source.get(day, 0.0)) if has_cid else None
+            approval_cid_count = float(approval_cid_source.get(day, 0.0)) if has_cid else None
             daily.append(
                 {
                     "date": day.isoformat(),
@@ -663,6 +741,13 @@ class WarehouseAttributionRunner:
                     "approval_rate_pct": (
                         numeric(approval_count / application_count * 100 if application_count > 0 else 0.0)
                         if approval_count is not None
+                        else None
+                    ),
+                    "cid_cnt": numeric(cid_count) if cid_count is not None else None,
+                    "approval_cid_cnt": numeric(approval_cid_count) if approval_cid_count is not None else None,
+                    "cid_approval_rate_pct": (
+                        numeric(approval_cid_count / cid_count * 100 if cid_count > 0 else 0.0)
+                        if approval_cid_count is not None and cid_count is not None
                         else None
                     ),
                 }
@@ -701,6 +786,7 @@ class WarehouseAttributionRunner:
                 "peak_date": peak["date"],
                 "latest_application_share_pct": latest["application_share_pct"],
                 "latest_approval_rate_pct": latest["approval_rate_pct"],
+                "latest_cid_approval_rate_pct": latest["cid_approval_rate_pct"],
             },
         }
 
@@ -913,10 +999,36 @@ class WarehouseAttributionRunner:
             merged[key] = winner
         return metrics.sort_records(merged.values())
 
+    def build_tracked_record(
+        self,
+        rule: dict[str, Any],
+        counts: pd.Series,
+    ) -> dict[str, Any] | None:
+        """Rebuild a manually tracked rule even when it is no longer an alert."""
+        metrics = getattr(self, "_metrics", None)
+        raw_conditions = rule.get("conditions") if isinstance(rule, dict) else None
+        if metrics is None or not isinstance(raw_conditions, list) or not raw_conditions:
+            return None
+        conditions: list[tuple[str, str]] = []
+        for part in raw_conditions:
+            if not isinstance(part, dict) or not part.get("field"):
+                return None
+            conditions.append((str(part["field"]), normalize_value(part.get("value"))))
+        return metrics.record(
+            conditions,
+            counts,
+            source=str(rule.get("source") or "已跟踪规则"),
+            forced=bool(rule.get("is_expert_forced")),
+            rule_note=str(rule.get("rule_note") or ""),
+            drilldown_rule=str(rule.get("drilldown_rule") or ""),
+            enters_next_level=bool(rule.get("enters_next_level")),
+        )
+
     def run(self) -> dict[str, Any]:
         self._resolve_window()
         daily_total, daily_info = self._daily_info()
         metrics = AttributionMetrics(self.config, self.partition, daily_total)
+        self._metrics = metrics
         single_groups = self._parallel_fields(self._grouped_field, self.dimensions)
         top_k, top_k_alerts, top_k_suppressed = self._run_top_k(metrics, single_groups)
         expert, expert_alerts, expert_suppressed = self._run_expert(metrics, single_groups)
@@ -933,11 +1045,15 @@ class WarehouseAttributionRunner:
         focus_daily = self._exact_daily([(part["field"], part["value"]) for part in highlight["conditions"]]) if highlight else pd.Series(dtype=float)
         day_index = list(metrics.days)
         daily_info_indexed = daily_info.set_index("day")
+        cid_daily = pd.to_numeric(daily_info_indexed.get(self.cid_count_field, pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+        approval_cid_daily = pd.to_numeric(daily_info_indexed.get(self.cid_approval_field, pd.Series(dtype=float)), errors="coerce").fillna(0.0)
         daily_trend = [
             {
                 "date": day.isoformat(),
                 "application_count": numeric(daily_total.get(day, 0.0)),
                 "approval_count": numeric(daily_info_indexed.get("approval_cnt", pd.Series(dtype=float)).get(day, 0.0)),
+                "cid_cnt": numeric(cid_daily.get(day, 0.0)),
+                "approval_cid_cnt": numeric(approval_cid_daily.get(day, 0.0)),
                 "expert_seed_count": numeric(expert_daily.get(day, 0.0)),
                 "focus_path_count": numeric(focus_daily.get(day, 0.0)),
             }
@@ -946,6 +1062,8 @@ class WarehouseAttributionRunner:
         latest_day, previous_day = day_index[-1], day_index[-2]
         latest_total, previous_total = float(daily_total.get(latest_day, 0.0)), float(daily_total.get(previous_day, 0.0))
         current_approval = float(daily_info_indexed.get("approval_cnt", pd.Series(dtype=float)).get(latest_day, 0.0))
+        current_cid = float(cid_daily.get(latest_day, 0.0))
+        current_approval_cid = float(approval_cid_daily.get(latest_day, 0.0))
 
         windows = [
             {
@@ -956,6 +1074,16 @@ class WarehouseAttributionRunner:
             }
             for spec in metrics.window_specs
         ]
+        for window in windows:
+            start = pd.Timestamp(window["observation_start"]).date()
+            end = pd.Timestamp(window["observation_end"]).date()
+            cid_selected = cid_daily[(cid_daily.index >= start) & (cid_daily.index <= end)]
+            approval_cid_selected = approval_cid_daily[(approval_cid_daily.index >= start) & (approval_cid_daily.index <= end)]
+            cid_count = float(cid_selected.sum())
+            approval_cid_count = float(approval_cid_selected.sum())
+            window["cid_cnt"] = numeric(cid_count)
+            window["approval_cid_cnt"] = numeric(approval_cid_count)
+            window["cid_approval_rate_pct"] = numeric(approval_cid_count / cid_count * 100 if cid_count else 0.0)
         return {
             "meta": {
                 "source": "MaxCompute", "table": self.table, "partition": self.partition, "version": self.config["version"],
@@ -971,7 +1099,10 @@ class WarehouseAttributionRunner:
                 "previous_application_count": numeric(previous_total),
                 "latest_day_change_pct": numeric((latest_total / previous_total - 1) * 100 if previous_total else 0.0),
                 "latest_approval_rate": numeric(current_approval / latest_total * 100 if latest_total else 0.0),
+                "latest_cid_approval_rate_pct": numeric(current_approval_cid / current_cid * 100 if current_cid else 0.0),
                 "approval_count": numeric(float(pd.to_numeric(daily_info.get("approval_cnt", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())),
+                "cid_cnt": numeric(float(cid_daily.sum())),
+                "approval_cid_cnt": numeric(float(approval_cid_daily.sum())),
                 "approval_jy0_count": numeric(float(pd.to_numeric(daily_info.get("approval_jy0_cnt", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())),
                 "merged_alert_count": len(merged_alerts), "level3_count": sum(1 for row in merged_alerts if row["level"] == 3),
                 "level2_count": sum(1 for row in merged_alerts if row["level"] == 2),

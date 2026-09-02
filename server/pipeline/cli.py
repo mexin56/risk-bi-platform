@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
@@ -29,6 +31,7 @@ if str(SERVER_DIR) not in sys.path:
 from app import AttributionService, json_safe, load_config, load_local_env  # noqa: E402
 from pipeline import DB_PATH, SERVING_DIR  # noqa: E402
 from pipeline import exporter, store  # noqa: E402
+from pipeline import assemble  # noqa: E402
 from warehouse import WarehouseAttributionRunner  # noqa: E402
 
 
@@ -55,11 +58,17 @@ def build_path_rows(
         _day_text(day): float(count or 0)
         for day, count in totals_series.items()
     }
+    all_days = sorted(pd.Timestamp(day).date() for day in totals)
+    has_approval = bool(runner.config.get("approval_fields"))
+    has_cid = bool(getattr(runner, "cid_count_field", "") and getattr(runner, "cid_approval_field", ""))
     rows: list[dict[str, Any]] = []
-    for alert_id, (series, approval_series) in series_map.items():
-        for day, count in series.items():
+    for alert_id, (series, approval_series, cid_series, approval_cid_series) in series_map.items():
+        for day in all_days:
+            count = series.get(day, 0.0)
             day_text = _day_text(day)
-            approval = float(approval_series.get(day, 0.0)) if len(approval_series) else None
+            approval = float(approval_series.get(day, 0.0)) if has_approval else None
+            cid_count = float(cid_series.get(day, 0.0)) if has_cid else None
+            approval_cid_count = float(approval_cid_series.get(day, 0.0)) if has_cid else None
             rows.append(
                 {
                     "alert_id": alert_id,
@@ -67,6 +76,8 @@ def build_path_rows(
                     "application_count": float(count or 0),
                     "total_application_count": float(totals.get(day_text, 0.0) or 0),
                     "approval_count": approval,
+                    "cid_cnt": cid_count,
+                    "approval_cid_cnt": approval_cid_count,
                 }
             )
     return rows
@@ -145,8 +156,40 @@ def compute_and_publish(
     result = json_safe(runner.run())
     compute_seconds = time.time() - started
 
+    # 处于“已上策略/持续观察”的规则即使本次不再触发预警，也要继续进入
+    # merged_alerts 和 path_daily，便于页面按状态复盘并保留每日 0 值。
+    tracked_rules = [
+        entry
+        for entry in service._status_store.get_all().values()
+        if int(entry.get("status", 0)) in (1, 2) and isinstance(entry.get("rule"), dict)
+    ]
+    if tracked_rules:
+        condition_sets = [
+            {"key": entry["canonical_path"], "conditions": entry["rule"].get("conditions", [])}
+            for entry in tracked_rules
+        ]
+        tracked_series = runner.paths_exact_daily_batch(condition_sets)
+        current_paths = {str(alert.get("canonical_path")) for alert in result.get("merged_alerts", [])}
+        tracked_records: list[dict[str, Any]] = []
+        for entry in tracked_rules:
+            if entry["canonical_path"] in current_paths:
+                continue
+            series = tracked_series.get(entry["canonical_path"])
+            if series is None:
+                continue
+            tracked_record = runner.build_tracked_record(entry["rule"], series[0])
+            if tracked_record is not None:
+                tracked_record["is_tracked_only"] = True
+                tracked_records.append(tracked_record)
+        if tracked_records:
+            result["merged_alerts"] = [*result.get("merged_alerts", []), *tracked_records]
+            result["merged_alert_total"] = len(result["merged_alerts"])
+
     path_rows_started = time.time()
     path_rows = build_path_rows(runner, result)
+    # path_daily 已经计算完成后，把窗口级人数口径回填到 payload，
+    # 这样 attr_alert_windows 和 dashboard 快照都带有相同的预计算结果。
+    assemble.enrich_approval_rates(result, pd.DataFrame(path_rows))
     path_seconds = time.time() - path_rows_started
 
     try:

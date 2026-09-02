@@ -803,38 +803,6 @@ class AttributionService:
             f"pt={selected_partition} 尚无该路径的预计算趋势数据，请先刷新归因结果。"
         )
 
-        # 优先读预计算路径日序列(serving 快照), 点击响应 <100ms
-        if serving_assemble is not None:
-            frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected_partition, offset)
-            series, approval_series, cid_series, approval_cid_series = serving_assemble.path_series_for_alert(frame, record_id)
-            if series is not None:
-                runner = WarehouseAttributionRunner(
-                    config=self.config,
-                    table=self.table_name,
-                    partition=selected_partition,
-                    offset=offset,
-                    query_rows=self._run_sql_rows,
-                )
-                # 趋势上下文从快照自身日期范围构建(重算后覆盖近 trend_days 天;
-                # 旧快照仅 15 天时自动降级展示实际天数)
-                context = serving_assemble.build_trend_context(frame)
-                result = runner.format_path_trend(
-                    record, context, series, approval_series, cid_series, approval_cid_series
-                )
-                self._path_trend_cache[cache_key] = (time.time(), result)
-                return copy.deepcopy(result)
-
-        runner = WarehouseAttributionRunner(
-            config=self.config,
-            table=self.table_name,
-            partition=selected_partition,
-            offset=offset,
-            query_rows=self._run_sql_rows,
-        )
-        result = runner.path_trend(record)
-        self._path_trend_cache[cache_key] = (time.time(), result)
-        return copy.deepcopy(result)
-
 
 load_local_env()
 CACHE_SECONDS = int(os.getenv("ATTRIBUTION_CACHE_SECONDS", "900"))
