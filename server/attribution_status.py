@@ -52,13 +52,6 @@ class AttributionStatusStore:
                         raise
             connection.execute(
                 """
-                UPDATE attribution_rule_status
-                SET action_date = substr(updated_at, 1, 10)
-                WHERE status IN (1, 2) AND action_date IS NULL
-                """
-            )
-            connection.execute(
-                """
                 CREATE TABLE IF NOT EXISTS attribution_rule_status_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     canonical_path TEXT NOT NULL,

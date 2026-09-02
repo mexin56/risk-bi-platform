@@ -3,6 +3,7 @@ from app import AttributionService
 from pipeline.cli import build_path_rows
 import pandas as pd
 import pytest
+import sqlite3
 
 
 def test_rule_status_can_be_updated_cleared_and_reopened(tmp_path):
@@ -132,3 +133,41 @@ def test_action_pt_is_required_and_saved_as_current_action_date(tmp_path):
 
     store.set_status("layer=c", 1, "alice", action_pt="20260901")
     assert store.get_all()["layer=c"]["action_date"] == "20260901"
+
+
+def test_legacy_status_row_is_preserved_during_schema_migration(tmp_path):
+    db_path = tmp_path / "status.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE attribution_rule_status (
+                canonical_path TEXT PRIMARY KEY,
+                status INTEGER NOT NULL,
+                updated_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                action_date TEXT,
+                rule_json TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO attribution_rule_status
+                (canonical_path, status, updated_by, updated_at, action_date, rule_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ["legacy", 1, "alice", "2026-09-01T01:02:03+00:00", None, '{"old":true}'],
+        )
+
+    AttributionStatusStore(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT canonical_path, status, updated_by, updated_at, action_date, rule_json
+            FROM attribution_rule_status
+            WHERE canonical_path = ?
+            """,
+            ["legacy"],
+        ).fetchone()
+    assert row == ("legacy", 1, "alice", "2026-09-01T01:02:03+00:00", None, '{"old":true}')
