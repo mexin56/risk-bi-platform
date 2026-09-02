@@ -1,4 +1,5 @@
 export type Severity = 'slate' | 'yellow' | 'orange' | 'red';
+export type RuleStatus = 0 | 1 | 2;
 
 export interface WindowMetric {
   key: '1d' | '3d' | '7d';
@@ -15,6 +16,9 @@ export interface WindowMetric {
   observation_count: number;
   approval_count: number | null;
   approval_rate_pct: number | null;
+  cid_cnt: number | null;
+  approval_cid_cnt: number | null;
+  cid_approval_rate_pct: number | null;
   baseline_daily: number;
   observation_daily: number;
   baseline_share: number;
@@ -53,6 +57,7 @@ export interface AttributionRecord {
   hit_window_count: number;
   observation_count: number;
   approval_rate_pct: number | null;
+  cid_approval_rate_pct: number | null;
   growth_factor: number;
   structure_lift_factor: number;
   z_score: number;
@@ -62,9 +67,37 @@ export interface AttributionRecord {
   rule_note: string;
   is_suppressed: boolean;
   suppression_reasons: string[];
+  status: RuleStatus;
+  status_updated_at: string | null;
+  status_updated_by: string | null;
+  action_date: string | null;
+  is_tracked_only?: boolean;
   enters_next_level: boolean;
   drilldown_rule: string;
   windows: Record<'1d' | '3d' | '7d', WindowMetric>;
+}
+
+export interface AttributionRuleStatusHistory {
+  id: number;
+  canonical_path: string;
+  status: 1 | 2;
+  rule: AttributionRecord | null;
+  entered_at: string;
+  entered_pt: string;
+  entered_by: string;
+  exited_at: string | null;
+  exited_pt: string | null;
+  exited_by: string | null;
+  is_active: boolean;
+}
+
+export interface AttributionRuleStatusUpdateResponse {
+  canonical_path: string;
+  status: RuleStatus;
+  updated_at: string;
+  updated_by: string;
+  action_date: string | null;
+  history: AttributionRuleStatusHistory | null;
 }
 
 export interface AttributionPathTrend {
@@ -88,6 +121,9 @@ export interface AttributionPathTrend {
     application_share_pct: number;
     approval_count: number | null;
     approval_rate_pct: number | null;
+    cid_cnt: number | null;
+    approval_cid_cnt: number | null;
+    cid_approval_rate_pct: number | null;
   }>;
   summary: {
     period_days: number;
@@ -99,6 +135,7 @@ export interface AttributionPathTrend {
     peak_date: string;
     latest_application_share_pct: number;
     latest_approval_rate_pct: number | null;
+    latest_cid_approval_rate_pct: number | null;
   };
 }
 
@@ -126,7 +163,10 @@ export interface AttributionDashboard {
     previous_application_count: number;
     latest_day_change_pct: number;
     latest_approval_rate: number;
+    latest_cid_approval_rate_pct: number;
     approval_count: number;
+    cid_cnt: number;
+    approval_cid_cnt: number;
     approval_jy0_count: number;
     merged_alert_count: number;
     level3_count: number;
@@ -220,4 +260,34 @@ export function fetchAttributionPathTrend(recordId: string, pt?: string, offset 
   if (pt) query.set('pt', pt);
   if (offset > 0) query.set('offset', String(offset));
   return getJson<AttributionPathTrend>(`/api/credit-attribution/path-trend?${query}`);
+}
+
+export function updateAttributionRuleStatus(
+  canonicalPath: string,
+  status: RuleStatus,
+  actionPt: string,
+  rule?: AttributionRecord,
+): Promise<AttributionRuleStatusUpdateResponse> {
+  const token = getToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch('/api/credit-attribution/rule-status', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ canonical_path: canonicalPath, status, action_pt: actionPt, rule }),
+  }).then(async (response) => {
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body.detail || '规则状态更新失败');
+    }
+    return body as AttributionRuleStatusUpdateResponse;
+  });
+}
+
+export function fetchAttributionRuleStatusHistory(): Promise<{
+  records: AttributionRuleStatusHistory[];
+}> {
+  return getJson<{ records: AttributionRuleStatusHistory[] }>(
+    '/api/credit-attribution/rule-status-history',
+  );
 }

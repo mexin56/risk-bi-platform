@@ -4,6 +4,39 @@ from pipeline.cli import build_path_rows
 import pandas as pd
 import pytest
 import sqlite3
+import json
+
+
+def test_rule_status_update_requires_action_pt():
+    from app import RuleStatusUpdate
+
+    with pytest.raises(Exception):
+        RuleStatusUpdate(canonical_path="layer=a", status=1)
+    with pytest.raises(Exception):
+        RuleStatusUpdate(canonical_path="layer=a", status=1, action_pt=" ")
+
+
+def test_rule_status_update_returns_current_history_without_warehouse_query(tmp_path, monkeypatch):
+    import app as app_module
+
+    store = AttributionStatusStore(tmp_path / "status.sqlite3")
+    monkeypatch.setattr(app_module.service, "_status_store", store)
+
+    response = app_module.update_rule_status(
+        app_module.RuleStatusUpdate(
+            canonical_path="layer=a",
+            status=1,
+            action_pt="20260901",
+        ),
+        {"username": "alice"},
+    )
+    payload = json.loads(response.body)
+
+    assert payload["action_date"] == "20260901"
+    assert payload["history"]["canonical_path"] == "layer=a"
+    assert payload["history"]["status"] == 1
+    assert payload["history"]["entered_pt"] == "20260901"
+    assert payload["history"]["is_active"] is True
 
 
 def test_rule_status_can_be_updated_cleared_and_reopened(tmp_path):

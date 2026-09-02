@@ -21,10 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 from auth import require_perm, router as auth_router
+from attribution_status import AttributionStatusStore
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -34,15 +37,17 @@ except ImportError:  # pragma: no cover
 
 # 预计算 serving 快照层(P1):缺失/损坏时自动降级为在线计算,不阻塞启动
 try:
-    from pipeline import SERVING_DIR, assemble as serving_assemble
+    from pipeline import DB_PATH, SERVING_DIR, assemble as serving_assemble
 except Exception:  # pragma: no cover
     SERVING_DIR = ROOT / "data" / "serving"
+    DB_PATH = ROOT / "data" / "attribution.duckdb"
     serving_assemble = None  # type: ignore[assignment]
 
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "attribution_config.json"
 LOCAL_ENV_PATH = ROOT / ".env.local"
+STATUS_DB_PATH = ROOT / "data" / "attribution_status.sqlite3"
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$")
 SAFE_PARTITION = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_RECORD_ID = re.compile(r"^[0-9a-f]{12}$")
@@ -155,11 +160,40 @@ def json_safe(value: Any) -> Any:
 class AttributionService:
     def __init__(self) -> None:
         self.config = load_config()
+        self._status_store = AttributionStatusStore(STATUS_DB_PATH)
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._path_trend_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
         self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
+
+    def with_rule_statuses(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Overlay manually managed rule states onto a fresh dashboard payload."""
+        result = copy.deepcopy(payload)
+        statuses = self._status_store.get_all()
+        missing_rules: list[tuple[str, dict[str, Any]]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                canonical_path = value.get("canonical_path")
+                if canonical_path is not None:
+                    status = statuses.get(str(canonical_path))
+                    value["status"] = int(status["status"]) if status else 0
+                    value["status_updated_at"] = status["updated_at"] if status else None
+                    value["status_updated_by"] = status["updated_by"] if status else None
+                    value["action_date"] = status.get("action_date") if status else None
+                    if status and int(status["status"]) in (1, 2) and not status.get("rule"):
+                        missing_rules.append((str(canonical_path), value))
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(result)
+        for canonical_path, rule in missing_rules:
+            self._status_store.save_rule_if_missing(canonical_path, rule)
+        return result
 
     @property
     def table_name(self) -> str:
@@ -199,6 +233,39 @@ class AttributionService:
         """清空分区缓存后重新发现(上游补数/调度延迟时, 前端刷新即可见到新分区)."""
         self._partition_cache = None
         return self.available_partitions()
+
+    def _latest_published_partition(self, offset: int) -> str | None:
+        """Return the newest local serving partition without querying MaxCompute."""
+        if serving_assemble is not None:
+            pattern = re.compile(r"^dashboard_(.+)_(\d+)\.parquet$")
+            candidates: list[str] = []
+            serving_dir = Path(SERVING_DIR)
+            if serving_dir.exists():
+                for path in serving_dir.glob(f"dashboard_*_{offset}.parquet"):
+                    match = pattern.fullmatch(path.name)
+                    if match and int(match.group(2)) == offset:
+                        candidates.append(match.group(1))
+            for candidate in sorted(set(candidates), reverse=True):
+                try:
+                    snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, candidate, offset)
+                except Exception:
+                    snapshot = None
+                if snapshot is not None:
+                    return candidate
+
+        # serving 快照不可用时，再检查已经落盘的在线缓存；同样不访问 MaxCompute。
+        cache_dir = Path(DISK_CACHE_DIR)
+        if cache_dir.exists():
+            cache_pattern = re.compile(r"^([A-Za-z0-9_-]+)_(\d+)\.json$")
+            cached_candidates: list[str] = []
+            for path in cache_dir.glob(f"*_{offset}.json"):
+                match = cache_pattern.fullmatch(path.name)
+                if match and int(match.group(2)) == offset:
+                    cached_candidates.append(match.group(1))
+            for candidate in sorted(set(cached_candidates), reverse=True):
+                if self._load_disk_cache(f"{candidate}|{offset}") is not None:
+                    return candidate
+        return None
 
     def partition_ranges(self) -> dict[str, dict[str, str]]:
         """每个分区内 create_date 的 MIN/MAX, 供前端观察区间档位动态计算.
@@ -310,13 +377,25 @@ class AttributionService:
         return snapshot
 
     def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
-        partitions = self.available_partitions()
-        if not partitions:
-            raise AttributionServiceError("目标表未找到可用 pt 分区。")
-        selected = partition or partitions[0]
-        if not SAFE_PARTITION.fullmatch(selected) or selected not in partitions:
-            raise AttributionServiceError(f"分区 pt={selected} 不存在或格式不合法。")
         offset = max(0, min(int(offset), 180))
+
+        # 首次打开页面优先展示最近已发布快照，避免因为上游刚出新 pt 而同步扫 MaxCompute。
+        # force=true 或显式指定 pt 时，仍走最新分区/指定分区的计算路径。
+        partitions: list[str] | None = None
+        selected = partition
+        if selected is None and not force:
+            selected = self._latest_published_partition(offset)
+        if selected is None:
+            partitions = self.available_partitions()
+            if not partitions:
+                raise AttributionServiceError("目标表未找到可用 pt 分区。")
+            selected = partition or partitions[0]
+
+        if not SAFE_PARTITION.fullmatch(selected):
+            raise AttributionServiceError(f"分区 pt={selected} 格式不合法。")
+        if partitions is not None and selected not in partitions:
+            raise AttributionServiceError(f"分区 pt={selected} 不存在或格式不合法。")
+
         cache_key = f"{selected}|{offset}"
 
         if force:
@@ -358,6 +437,11 @@ class AttributionService:
                 result["meta"]["cache_hit"] = True
                 return result
 
+        if not force:
+            raise AttributionServiceError(
+                f"pt={selected} 尚未发布预计算快照，请点击刷新后再查看最新数据。"
+            )
+
         # force 刷新且已有旧缓存: 立即返回旧数据, 后台线程异步重算(避免用户长时间等待)
         if force and cached:
             result = copy.deepcopy(cached[1])
@@ -393,6 +477,178 @@ class AttributionService:
             # 兜底写回:子进程把结果发布进 DuckDB + 快照(下次就是秒读)
             self._spawn_ingest(selected, offset, result)
             return copy.deepcopy(result)
+
+    @staticmethod
+    def _format_precomputed_path_trend(
+        record: dict[str, Any], rows: list[dict[str, Any]], limit: int = 60
+    ) -> dict[str, Any] | None:
+        """Format path trend rows already persisted by the attribution pipeline."""
+        totals: dict[str, float] = {}
+        path_counts: dict[str, float] = {}
+        approvals: dict[str, float] = {}
+        cid_counts: dict[str, float] = {}
+        approval_cid_counts: dict[str, float] = {}
+        record_id = str(record["id"])
+
+        def day_text(value: Any) -> str:
+            return value.isoformat() if hasattr(value, "isoformat") else str(value)[:10]
+
+        def number(value: Any) -> float:
+            try:
+                parsed = float(value or 0)
+                return parsed if parsed == parsed else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+
+        for row in rows:
+            day = day_text(row.get("date"))
+            total = number(row.get("total_application_count"))
+            totals[day] = max(totals.get(day, 0.0), total)
+            if str(row.get("alert_id")) != record_id:
+                continue
+            path_counts[day] = number(row.get("application_count"))
+            approval = row.get("approval_count")
+            if approval is not None:
+                try:
+                    parsed_approval = float(approval)
+                    if parsed_approval == parsed_approval:
+                        approvals[day] = parsed_approval
+                except (TypeError, ValueError):
+                    pass
+            cid = row.get("cid_cnt")
+            if cid is not None:
+                try:
+                    parsed_cid = float(cid)
+                    if parsed_cid == parsed_cid:
+                        cid_counts[day] = parsed_cid
+                except (TypeError, ValueError):
+                    pass
+            approval_cid = row.get("approval_cid_cnt")
+            if approval_cid is not None:
+                try:
+                    parsed_approval_cid = float(approval_cid)
+                    if parsed_approval_cid == parsed_approval_cid:
+                        approval_cid_counts[day] = parsed_approval_cid
+                except (TypeError, ValueError):
+                    pass
+
+        days = sorted(totals)[-int(limit):]
+        if not days:
+            return None
+
+        daily: list[dict[str, Any]] = []
+        for day in days:
+            application_count = path_counts.get(day, 0.0)
+            total_application_count = totals[day]
+            approval_count = approvals.get(day)
+            cid_count = cid_counts.get(day)
+            approval_cid_count = approval_cid_counts.get(day)
+            daily.append(
+                {
+                    "date": day,
+                    "application_count": application_count,
+                    "total_application_count": total_application_count,
+                    "application_share_pct": (
+                        application_count / total_application_count * 100
+                        if total_application_count
+                        else 0.0
+                    ),
+                    "approval_count": approval_count,
+                    "approval_rate_pct": (
+                        approval_count / application_count * 100
+                        if approval_count is not None and application_count > 0
+                        else 0.0 if approval_count is not None else None
+                    ),
+                    "cid_cnt": cid_count,
+                    "approval_cid_cnt": approval_cid_count,
+                    "cid_approval_rate_pct": (
+                        approval_cid_count / cid_count * 100
+                        if approval_cid_count is not None and cid_count is not None and cid_count > 0
+                        else 0.0 if approval_cid_count is not None and cid_count is not None else None
+                    ),
+                }
+            )
+
+        latest = daily[-1]
+        previous = daily[-2] if len(daily) > 1 else None
+        peak = max(daily, key=lambda item: float(item["application_count"]))
+        primary_window = (record.get("windows") or {}).get(record.get("primary_window"), {})
+        return {
+            "record_id": record["id"],
+            "path": record["path"],
+            "source": record["source"],
+            "level": record["level"],
+            "level_label": record["level_label"],
+            "severity": record["severity"],
+            "primary_window": {
+                "key": record["primary_window"],
+                "label": primary_window.get("label", record["primary_window_label"]),
+                "observation_start": primary_window.get("observation_start"),
+                "observation_end": primary_window.get("observation_end"),
+                "baseline_daily": primary_window.get("baseline_daily", 0),
+            },
+            "daily": daily,
+            "summary": {
+                "period_days": len(daily),
+                "period_application_count": sum(float(item["application_count"]) for item in daily),
+                "latest_application_count": latest["application_count"],
+                "previous_application_count": previous["application_count"] if previous else None,
+                "latest_day_change_pct": (
+                    (float(latest["application_count"]) / float(previous["application_count"]) - 1) * 100
+                    if previous and float(previous["application_count"]) > 0
+                    else 0.0
+                ),
+                "peak_application_count": peak["application_count"],
+                "peak_date": peak["date"],
+                "latest_application_share_pct": latest["application_share_pct"],
+                "latest_approval_rate_pct": latest["approval_rate_pct"],
+                "latest_cid_approval_rate_pct": latest["cid_approval_rate_pct"],
+            },
+        }
+
+    def _read_duckdb_path_trend(
+        self, record: dict[str, Any], selected: str, offset: int
+    ) -> dict[str, Any] | None:
+        """Read the latest precomputed path trend for a pt from DuckDB."""
+        if not Path(DB_PATH).exists():
+            return None
+        try:
+            conn = duckdb.connect(str(DB_PATH), read_only=True)
+            try:
+                run = conn.execute(
+                    """
+                    SELECT run_id
+                    FROM attr_runs
+                    WHERE pt = ? AND offset_days = ?
+                    ORDER BY generated_at DESC
+                    LIMIT 1
+                    """,
+                    [selected, int(offset)],
+                ).fetchone()
+                if not run:
+                    return None
+                result = conn.execute(
+                    """
+                    SELECT alert_id, date, application_count,
+                           total_application_count, approval_count,
+                           cid_cnt, approval_cid_cnt
+                    FROM attr_path_daily
+                    WHERE run_id = ?
+                    ORDER BY date, alert_id
+                    """,
+                    [run[0]],
+                ).fetchall()
+                columns = [
+                    "alert_id", "date", "application_count",
+                    "total_application_count", "approval_count",
+                    "cid_cnt", "approval_cid_cnt",
+                ]
+                rows = [dict(zip(columns, row)) for row in result]
+            finally:
+                conn.close()
+            return self._format_precomputed_path_trend(record, rows)
+        except Exception:
+            return None
 
     def _spawn_ingest(self, selected: str, offset: int, result: dict[str, Any]) -> None:
         """后台子进程调用管线 ingest,把在线兜底结果写入 DuckDB + 快照。
@@ -528,10 +784,29 @@ class AttributionService:
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return copy.deepcopy(cached[1])
 
+        result = self._read_duckdb_path_trend(record, selected_partition, offset)
+        if result is not None:
+            self._path_trend_cache[cache_key] = (time.time(), result)
+            return copy.deepcopy(result)
+
+        if serving_assemble is not None:
+            frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected_partition, offset)
+            if frame is not None:
+                result = self._format_precomputed_path_trend(
+                    record, frame.to_dict(orient="records")
+                )
+                if result is not None:
+                    self._path_trend_cache[cache_key] = (time.time(), result)
+                    return copy.deepcopy(result)
+
+        raise AttributionServiceError(
+            f"pt={selected_partition} 尚无该路径的预计算趋势数据，请先刷新归因结果。"
+        )
+
         # 优先读预计算路径日序列(serving 快照), 点击响应 <100ms
         if serving_assemble is not None:
             frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected_partition, offset)
-            series, approval_series = serving_assemble.path_series_for_alert(frame, record_id)
+            series, approval_series, cid_series, approval_cid_series = serving_assemble.path_series_for_alert(frame, record_id)
             if series is not None:
                 runner = WarehouseAttributionRunner(
                     config=self.config,
@@ -543,7 +818,9 @@ class AttributionService:
                 # 趋势上下文从快照自身日期范围构建(重算后覆盖近 trend_days 天;
                 # 旧快照仅 15 天时自动降级展示实际天数)
                 context = serving_assemble.build_trend_context(frame)
-                result = runner.format_path_trend(record, context, series, approval_series)
+                result = runner.format_path_trend(
+                    record, context, series, approval_series, cid_series, approval_cid_series
+                )
                 self._path_trend_cache[cache_key] = (time.time(), result)
                 return copy.deepcopy(result)
 
@@ -571,6 +848,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+
+
+class RuleStatusUpdate(BaseModel):
+    canonical_path: str = Field(min_length=1, max_length=2000)
+    status: int = Field(ge=0, le=2)
+    action_pt: str = Field(min_length=1, max_length=64)
+    rule: dict[str, Any] | None = None
+
+    @field_validator("action_pt")
+    @classmethod
+    def action_pt_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("action_pt cannot be blank")
+        return value
 # 除登录外，全部接口均需 Authorization: Bearer <token>；
 # 归因数据要求当前账号具备 attribution 页面权限。
 
@@ -619,9 +910,46 @@ def dashboard(
     _user: dict = Depends(require_perm("attribution")),
 ) -> JSONResponse:
     try:
-        return JSONResponse(content=json_safe(service.dashboard(partition=pt, force=force, offset=offset)))
+        payload = service.with_rule_statuses(service.dashboard(partition=pt, force=force, offset=offset))
+        return JSONResponse(content=json_safe(payload))
     except Exception as exc:
         raise handle_error(exc) from exc
+
+
+@app.put("/api/credit-attribution/rule-status")
+def update_rule_status(
+    update: RuleStatusUpdate,
+    user: dict = Depends(require_perm("attribution")),
+) -> JSONResponse:
+    try:
+        result = service._status_store.set_status(
+            update.canonical_path,
+            update.status,
+            str(user.get("username") or "unknown"),
+            action_pt=update.action_pt,
+            rule=update.rule,
+        )
+        history = next(
+            (
+                item
+                for item in service._status_store.get_history()
+                if item["canonical_path"] == result["canonical_path"] and item["is_active"]
+            ),
+            None,
+        )
+        result["history"] = history if result["status"] in (1, 2) else None
+        return JSONResponse(content=json_safe(result))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise handle_error(exc) from exc
+
+
+@app.get("/api/credit-attribution/rule-status-history")
+def rule_status_history(
+    _user: dict = Depends(require_perm("attribution")),
+) -> JSONResponse:
+    return JSONResponse(content=json_safe({"records": service._status_store.get_history()}))
 
 
 @app.get("/api/credit-attribution/path-trend")

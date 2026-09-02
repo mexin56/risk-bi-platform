@@ -24,12 +24,15 @@ import {
   fetchAttributionPartitions,
   fetchAttributionPathTrend,
   fetchCreditAttribution,
+  updateAttributionRuleStatus,
   type AttributionDashboard,
   type AttributionPathTrend,
   type AttributionRecord,
+  type RuleStatus,
   type Severity,
   type WindowMetric,
 } from '@/lib/creditAttributionApi';
+import { LatestRequestGuard } from '@/lib/latestRequestGuard';
 
 const numberFormatter = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 
@@ -41,6 +44,18 @@ const SEVERITY: Record<Severity, { bg: string; border: string; text: string; dot
 };
 
 const WINDOW_ORDER: Array<'1d' | '3d' | '7d'> = ['1d', '3d', '7d'];
+
+const RULE_STATUS_OPTIONS: Array<{ value: RuleStatus; label: string }> = [
+  { value: 0, label: '不需要处理' },
+  { value: 1, label: '已上策略' },
+  { value: 2, label: '持续观察' },
+];
+
+const RULE_STATUS_TABS: Array<{ value: RuleStatus; label: string }> = [
+  { value: 0, label: '发现规则' },
+  { value: 1, label: '已上策略' },
+  { value: 2, label: '持续观察监控' },
+];
 
 function formatNumber(value: number | undefined | null) {
   return numberFormatter.format(Number(value ?? 0));
@@ -178,9 +193,10 @@ function WindowCard({ metric, primary = false }: { metric: WindowMetric; primary
         </div>
         <SeverityTag severity={metric.severity} text={metric.level_label.replace('Level0 无预警', '无预警')} />
       </div>
-      <div className="mt-2 grid grid-cols-5 gap-2 text-[10px]">
+      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-6">
         <div><div className="text-slate-400">观察量</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatNumber(metric.observation_count)}</div></div>
-        <div><div className="text-slate-400">通过率</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatApprovalRate(metric.approval_rate_pct)}</div></div>
+        <div><div className="text-slate-400">通过率（件数）</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatApprovalRate(metric.approval_rate_pct)}</div></div>
+        <div><div className="text-slate-400">通过率（人数）</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{formatApprovalRate(metric.cid_approval_rate_pct)}</div></div>
         <div><div className="text-slate-400">增长</div><div className="mt-0.5 font-semibold tabular-nums" style={{ color: tone.text }}>{formatFactor(metric.growth_factor)}</div></div>
         <div><div className="text-slate-400">结构</div><div className="mt-0.5 font-semibold tabular-nums" style={{ color: tone.text }}>{formatFactor(metric.structure_lift_factor)}</div></div>
         <div><div className="text-slate-400">z-score</div><div className="mt-0.5 font-semibold text-slate-700 tabular-nums">{metric.z_score.toFixed(2)}</div></div>
@@ -324,17 +340,19 @@ function SelectedPathAnalysis({
 
             {!pathTrendLoading && currentTrend && (
               <>
-                <div className="grid grid-cols-2 gap-2 px-3.5 pt-3 sm:grid-cols-5">
+                <div className="grid grid-cols-2 gap-2 px-3.5 pt-3 sm:grid-cols-6">
                   <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">{visibleDays}天累计</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(totalApplications)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">最新日</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(latestPoint?.application_count ?? 0)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">较前一日</div><div className={`mt-0.5 text-[17px] font-semibold tabular-nums ${changePct >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{formatSignedPercent(changePct)}</div></div>
                   <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><div className="text-[10px] text-slate-400">{visibleDays}天峰值</div><div className="mt-0.5 text-[17px] font-semibold text-slate-700 tabular-nums">{formatNumber(peakPoint?.application_count ?? 0)}</div><div className="text-[9.5px] text-slate-400">{peakPoint?.date}</div></div>
-                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{latestPoint?.approval_rate_pct == null ? '—' : `${latestPoint.approval_rate_pct.toFixed(2)}%`}</div></div>
+                  <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率（件数）</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{latestPoint?.approval_rate_pct == null ? '—' : `${latestPoint.approval_rate_pct.toFixed(2)}%`}</div></div>
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率（人数）</div><div className="mt-0.5 text-[17px] font-semibold text-emerald-700 tabular-nums">{latestPoint?.cid_approval_rate_pct == null ? '—' : `${latestPoint.cid_approval_rate_pct.toFixed(2)}%`}</div></div>
                 </div>
                 <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
                 <div className="-mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 px-3.5 pb-3 text-[10px] text-slate-400">
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm" style={{ background: trendBrand }} />路径申请量</span>
-                  <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: trendAccent }} />通过率</span>
+                  <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: trendAccent }} />通过率（件数）</span>
+                  <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: '#10b981' }} />通过率（人数）</span>
                   <span><i className="mr-1 inline-block h-2 w-3" style={{ background: trendTint }} />{currentTrend.primary_window.label}观察期</span>
                   <span><i className="mr-1 inline-block w-3 border-t border-dashed align-middle" style={{ borderColor: trendAccent }} />基准日均</span>
                 </div>
@@ -383,6 +401,8 @@ export default function CreditAttribution() {
   const [windowFilter, setWindowFilter] = useState<'all' | '1d' | '3d' | '7d'>(
     share.win === '1d' || share.win === '3d' || share.win === '7d' ? share.win : 'all',
   );
+  const [ruleStatusTab, setRuleStatusTab] = useState<RuleStatus>(0);
+  const [savingRuleStatus, setSavingRuleStatus] = useState<string | null>(null);
   const [dimFilter, setDimFilter] = useState<string>(share.dim ?? 'all'); // 下钻层级: 单维/二级/三级
   const [daysBack, setDaysBack] = useState(() => {
     const value = Number(share.offset ?? 0);
@@ -397,6 +417,7 @@ export default function CreditAttribution() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedAnalysisRef = useRef<HTMLDivElement>(null);
+  const loadRequestGuard = useRef(new LatestRequestGuard()).current;
   const contentRef = useRef<HTMLDivElement>(null); // 截屏范围 = 页面内容区
 
   // 分区列表刷新: force=true 跳过服务端缓存, 用于刷新归因后立即发现上游新分区(调度延迟补数场景)
@@ -412,11 +433,14 @@ export default function CreditAttribution() {
   }, []);
 
   const load = useCallback(async (force = false, pt?: string, offset = 0) => {
+    const requestId = loadRequestGuard.begin();
+    const isCurrentRequest = () => loadRequestGuard.isCurrent(requestId);
     if (force) setRefreshing(true);
     else setLoading(true);
     setError(null);
     let asyncMode = false;
     const apply = (payload: AttributionDashboard) => {
+      if (!isCurrentRequest()) return;
       setDashboard(payload);
       setSelectedPartition(payload.meta.partition);
       setSelected((current) => payload.merged_alerts.find((record) => record.canonical_path === current?.canonical_path) ?? payload.highlight ?? payload.merged_alerts[0] ?? null);
@@ -426,6 +450,7 @@ export default function CreditAttribution() {
     };
     try {
       const payload = await fetchCreditAttribution(pt, force, offset);
+      if (!isCurrentRequest()) return;
       apply(payload);
       // 后端已返回旧缓存并启动后台重算: 轮询等待新结果(最多 12 次 × 15s)
       if (force && payload.meta.async_refresh) {
@@ -434,7 +459,9 @@ export default function CreditAttribution() {
         void (async () => {
           try {
             for (let attempt = 0; attempt < 12; attempt++) {
+              if (!isCurrentRequest()) return;
               await new Promise((resolve) => setTimeout(resolve, 15000));
+              if (!isCurrentRequest()) return;
               const fresh = await fetchCreditAttribution(pt, false, offset);
               if (fresh.meta.generated_at !== baseline) {
                 apply(fresh);
@@ -445,17 +472,19 @@ export default function CreditAttribution() {
           } catch {
             /* 轮询失败保留当前数据 */
           } finally {
-            setRefreshing(false);
+            if (isCurrentRequest()) setRefreshing(false);
           }
         })();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '无法获取授信归因数据');
+      if (isCurrentRequest()) setError(err instanceof Error ? err.message : '无法获取授信归因数据');
     } finally {
-      setLoading(false);
-      if (!asyncMode) setRefreshing(false);
+      if (isCurrentRequest()) {
+        setLoading(false);
+        if (!asyncMode) setRefreshing(false);
+      }
     }
-  }, []);
+  }, [loadRequestGuard]);
 
   useEffect(() => {
     reloadPartitions(false);
@@ -472,6 +501,54 @@ export default function CreditAttribution() {
     setPathTrendError(null);
     setPathTrendRequest((value) => value + 1);
     window.setTimeout(() => selectedAnalysisRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }, []);
+
+  const updateRuleStatus = useCallback(async (record: AttributionRecord, status: RuleStatus) => {
+    const canonicalPath = record.canonical_path;
+    setSavingRuleStatus(canonicalPath);
+    setError(null);
+    try {
+      const updated = await updateAttributionRuleStatus(
+        canonicalPath,
+        status,
+        dashboard?.meta.partition ?? selectedPartition,
+        record,
+      );
+      const applyStatus = (item: AttributionRecord) => item.canonical_path === canonicalPath
+        ? {
+            ...item,
+            status: updated.status,
+            status_updated_at: updated.updated_at,
+            status_updated_by: updated.updated_by,
+            action_date: updated.action_date,
+          }
+        : item;
+      setDashboard((current) => current ? {
+        ...current,
+        merged_alerts: current.merged_alerts.map(applyStatus),
+        highlight: current.highlight ? applyStatus(current.highlight) : current.highlight,
+        top_k: {
+          ...current.top_k,
+          single_downstream: current.top_k.single_downstream.map(applyStatus),
+          pair_downstream: current.top_k.pair_downstream.map(applyStatus),
+          third_alerts: current.top_k.third_alerts.map(applyStatus),
+        },
+        expert: {
+          ...current.expert,
+          single: current.expert.single ? applyStatus(current.expert.single) : current.expert.single,
+          pair: current.expert.pair ? applyStatus(current.expert.pair) : current.expert.pair,
+          third_alerts: current.expert.third_alerts.map(applyStatus),
+          third_calculated: current.expert.third_calculated.map(applyStatus),
+        },
+        suppressed_alerts: current.suppressed_alerts.map(applyStatus),
+      } : current);
+      setSelected((current) => current ? applyStatus(current) : current);
+      setSelectedTrendRecord((current) => current ? applyStatus(current) : current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '规则状态更新失败');
+    } finally {
+      setSavingRuleStatus(null);
+    }
   }, []);
 
   // 分享链接携带 path 时: 仪表盘就绪后自动选中该路径(含趋势加载与滚动定位)
@@ -530,6 +607,12 @@ export default function CreditAttribution() {
 
   const filteredAlerts = useMemo(() => {
     return allRows.filter((record) => {
+      // Discovery always shows the current pt's abnormal rows, regardless of
+      // whether the same rule is already marked as strategy/observation.
+      // Rows appended only for tracked daily statistics are not current hits.
+      const statusMatched = ruleStatusTab === 0
+        ? !record.is_tracked_only
+        : (record.status ?? 0) === ruleStatusTab;
       const levelMatched = levelFilter === 'all' || record.level === levelFilter;
       const sourceMatched = sourceFilter === 'all'
         || (sourceFilter === 'topk' && record.source.includes('Top-K'))
@@ -537,9 +620,18 @@ export default function CreditAttribution() {
       const typeMatched = typeFilter === 'all' || record.anomaly_type === typeFilter;
       const windowMatched = windowFilter === 'all' || record.primary_window === windowFilter;
       const dimMatched = dimFilter === 'all' || record.layer === dimFilter;
-      return levelMatched && sourceMatched && typeMatched && windowMatched && dimMatched;
+      return statusMatched && levelMatched && sourceMatched && typeMatched && windowMatched && dimMatched;
     });
-  }, [allRows, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter]);
+  }, [allRows, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter, ruleStatusTab]);
+
+  const ruleStatusCounts = useMemo(() => {
+    return RULE_STATUS_TABS.reduce<Record<RuleStatus, number>>((counts, tab) => {
+      counts[tab.value] = tab.value === 0
+        ? allRows.filter((record) => !record.is_tracked_only).length
+        : allRows.filter((record) => (record.status ?? 0) === tab.value).length;
+      return counts;
+    }, { 0: 0, 1: 0, 2: 0 });
+  }, [allRows]);
 
   const anomalyTypes = useMemo(() => {
     return Array.from(new Set(allRows.map((record) => record.anomaly_type))).sort();
@@ -668,8 +760,11 @@ export default function CreditAttribution() {
             `<b>${point.date}</b>`,
             `路径授信申请量：<b>${formatNumber(point.application_count)}</b> 件`,
             `路径通过量：<b>${formatNumber(point.approval_count)}</b> 件`,
+            `路径人数：<b>${formatNumber(point.cid_cnt)}</b> 人`,
+            `路径通过人数：<b>${formatNumber(point.approval_cid_cnt)}</b> 人`,
             `当日整体申请量：${formatNumber(point.total_application_count)} 件`,
-            `通过率：<b>${point.approval_rate_pct == null ? '—' : `${point.approval_rate_pct.toFixed(2)}%`}</b>`,
+            `通过率（件数）：<b>${point.approval_rate_pct == null ? '—' : `${point.approval_rate_pct.toFixed(2)}%`}</b>`,
+            `通过率（人数）：<b>${point.cid_approval_rate_pct == null ? '—' : `${point.cid_approval_rate_pct.toFixed(2)}%`}</b>`,
             `整体占比：${point.application_share_pct.toFixed(3)}%`,
           ].join('<br/>');
         },
@@ -729,11 +824,43 @@ export default function CreditAttribution() {
           itemStyle: { color: selectedTrendAccent },
           data: trend.map((item) => item.approval_rate_pct),
         },
+        {
+          name: '通过率（人数）',
+          type: 'line',
+          yAxisIndex: 1,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 4,
+          connectNulls: true,
+          lineStyle: { width: 2, type: 'dashed', color: '#10b981' },
+          itemStyle: { color: '#10b981' },
+          data: trend.map((item) => item.cid_approval_rate_pct),
+        },
       ],
     };
   }, [activeTheme.key, pathTrend, selectedTrendAccent, selectedTrendBrand, selectedTrendGuide, selectedTrendHover, selectedTrendTint, trendRange]);
 
+  const actionDateColumn: FeishuColumn<AttributionRecord> = {
+    key: 'action_date', title: '措施日期', width: 104, align: 'center',
+    render: (record) => record.status === 0 ? '—' : (record.action_date ?? '—'),
+  };
+
   const alertColumns: FeishuColumn<AttributionRecord>[] = [
+    {
+      key: 'status', title: '状态', width: 142, align: 'center',
+      render: (record) => (
+        <select
+          value={record.status ?? 0}
+          disabled={savingRuleStatus === record.canonical_path}
+          onChange={(event) => void updateRuleStatus(record, Number(event.target.value) as RuleStatus)}
+          aria-label={`设置规则状态 ${record.path}`}
+          className="theme-select max-w-[132px]"
+        >
+          {RULE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      ),
+    },
+    ...(ruleStatusTab === 0 ? [] : [actionDateColumn]),
     {
       key: 'level_label', title: '等级', sticky: true, width: 104,
       render: (record) => record.level === 0
@@ -766,7 +893,8 @@ export default function CreditAttribution() {
     { key: 'anomaly_type', title: '异常类型', width: 90 },
     { key: 'primary_window_label', title: '主窗口', width: 78, align: 'center' },
     { key: 'observation_count', title: '观察量', width: 82, align: 'right', render: (record) => formatNumber(record.observation_count) },
-    { key: 'approval_rate_pct', title: '通过率', width: 82, align: 'right', render: (record) => <span className="tabular-nums">{formatApprovalRate(record.approval_rate_pct)}</span> },
+    { key: 'approval_rate_pct', title: '通过率（件数）', width: 100, align: 'right', render: (record) => <span className="tabular-nums">{formatApprovalRate(record.approval_rate_pct)}</span> },
+    { key: 'cid_approval_rate_pct', title: '通过率（人数）', width: 100, align: 'right', render: (record) => <span className="tabular-nums">{formatApprovalRate(record.cid_approval_rate_pct)}</span> },
     { key: 'growth_factor', title: '申请增长', width: 92, align: 'right', render: (record) => formatFactor(record.growth_factor) },
     { key: 'structure_lift_factor', title: '结构提升', width: 92, align: 'right', render: (record) => formatFactor(record.structure_lift_factor) },
     { key: 'z_score', title: 'z-score', width: 76, align: 'right', render: (record) => record.z_score.toFixed(2) },
@@ -890,6 +1018,25 @@ export default function CreditAttribution() {
         subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；鼠标悬停路径放大显示完整值, 点击查看该路径近15天趋势`}
         accent="#f97316"
       >
+        <div role="tablist" aria-label="规则处理状态" className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3">
+          {RULE_STATUS_TABS.map((tab) => {
+            const active = ruleStatusTab === tab.value;
+            return (
+              <button
+                key={tab.value}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setRuleStatusTab(tab.value)}
+                className={`border-b-2 px-3 py-2 text-[12px] font-medium transition-colors ${active ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >
+                {tab.label}
+                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${active ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
+                  {ruleStatusCounts[tab.value]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
           <span className="theme-select-wrap">
           <select
