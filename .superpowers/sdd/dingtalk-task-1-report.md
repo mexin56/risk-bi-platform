@@ -1,68 +1,99 @@
 # Task 1 Report: Define agent contracts and configuration
 
-## 状态
+## Original task status
 
 DONE_WITH_CONCERNS
 
-## 改动文件
+## Original task changes
 
-- `server/attribution_agent.py`
-  - 新增 `AgentConfig` 及 `from_env()`。
-  - 新增可序列化的 `AgentAnswer`。
-  - 新增 `AttributionAgent.answer(question, context)` 公共接口；编排逻辑按任务简报留给后续任务。
-- `server/test_attribution_agent.py`
-  - 新增默认关闭配置测试。
-  - 新增回答必需字段序列化测试。
+- Added `server/attribution_agent.py` with `AgentConfig`, `AgentAnswer`, and the public `AttributionAgent.answer(question, context)` contract.
+- Added `server/test_attribution_agent.py` with the initial contract tests.
+- Original code commit: `a52887c` (`feat: define attribution agent contracts`).
 
-## 提交
+## Task 1 review repair report
 
-- Commit: `a52887c`
-- Message: `feat: define attribution agent contracts`
+### Status
 
-## 测试命令及完整结果
+DONE
 
-### TDD 红灯
+### Changes
 
-命令：
+- Strengthened `AgentAnswer.to_dict()` regression coverage with an exact nine-field set assertion and exact value assertion for every field.
+- Added `AgentConfig.from_env()` regression coverage for case-insensitive `enabled`, allowlist whitespace trimming and deduplication, timeout lower bound, and DingTalk/AI environment-variable mappings.
+- Added a test that locks the public `AttributionAgent.answer(question, context)` interface to explicitly raise `NotImplementedError` for Task 1.
+- Kept implementation scope limited to Task 1 contracts; no query tools or orchestration were added.
 
-```text
-python -m pytest server/test_attribution_agent.py -q
-```
+### Commit
 
-结果：失败（符合预期）。测试收集阶段报错：
+- Commit: `2e3f0ef`
+- Message: `test: strengthen attribution agent contracts`
 
-```text
-ModuleNotFoundError: No module named 'attribution_agent'
-!!!!!!!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!!!!!!!
-```
+### Test commands and complete results
 
-### TDD 绿灯
-
-命令：
+Command:
 
 ```text
 python -m pytest server/test_attribution_agent.py -q
 ```
 
-结果：
+Result:
 
 ```text
-..                                                                       [100%]
-2 passed in 0.06s
+....                                                                     [100%]
+4 passed in 0.07s
 ```
 
-### 语法与差异校验
-
-命令：
+Command:
 
 ```text
 python -m py_compile server/attribution_agent.py server/test_attribution_agent.py
-git diff --check -- server/attribution_agent.py server/test_attribution_agent.py
 ```
 
-结果：命令成功，无语法错误、无差异格式错误。
+Result: succeeded with no output.
 
-## 剩余疑问
+Command:
 
-- `AttributionAgent.answer()` 当前按 Task 1 要求只提供接口，调用时会明确抛出 `NotImplementedError`；后续任务需要接入固定只读查询工具和回答编排。
-- 未修改仓库中其他已有脏文件，也未配置或发送真实钉钉凭证。
+```text
+git diff --check
+```
+
+Result: succeeded. Only existing LF/CRLF conversion warnings were emitted; no whitespace errors.
+
+### Remaining questions
+
+- None. The later query/orchestration work remains reserved for subsequent tasks.
+
+## Report completion supplement
+
+The repair report was verified and completed after commit `2e3f0ef`.
+
+Status: `DONE`
+
+Complete verification output:
+
+```text
+python -m pytest server/test_attribution_agent.py -q
+....                                                                     [100%]
+4 passed in 0.06s
+
+python -m py_compile server/attribution_agent.py server/test_attribution_agent.py
+成功，无标准输出。
+
+git diff --check
+warning: in the working copy of '.superpowers/sdd/dingtalk-task-1-report.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/.env.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/app.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/attribution_notification.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/config/attribution_config.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/pipeline/cli.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/pipeline/dagster_defs.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/scripts/start_dagster.ps1', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/scripts/stop_dagster.ps1', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/test_attribution_notification.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/test_attribution_notification_sender.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/test_attribution_status.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'server/test_path_trend_duckdb.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/CreditAttribution.tsx', LF will be replaced by CRLF the next time Git touches it
+```
+
+`git diff --check` exit code was 0; the listed lines are only line-ending conversion warnings and no whitespace errors.
