@@ -82,8 +82,18 @@ def add_approval_rates(metrics: Mapping[str, Any]) -> dict[str, Any]:
     ) -> None:
         numerator_key = next((name for name in numerator_names if name in result), None)
         denominator_key = next((name for name in denominator_names if name in result), None)
-        numerator = _numeric(result.get(numerator_key)) if numerator_key else None
-        denominator = _numeric(result.get(denominator_key)) if denominator_key else None
+
+        def metric_value(key: str | None, names: tuple[str, ...]) -> float | None:
+            if key is None or result.get(key) is None:
+                warnings.append(f"{output_name}缺少指标 {key or names[0]}")
+                return None
+            value = _numeric(result[key])
+            if value is None:
+                warnings.append(f"{output_name}指标 {key} 非数字")
+            return value
+
+        numerator = metric_value(numerator_key, numerator_names)
+        denominator = metric_value(denominator_key, denominator_names)
         if denominator == 0:
             result[output_name] = None
             warnings.append(f"{output_name}分母 {denominator_label} 为 0")
@@ -351,14 +361,14 @@ class AttributionQueryTools:
         return self._envelope(pt=actual_pt, data=match)
 
     @staticmethod
-    def _normalized_days(days: int) -> tuple[int, list[str]]:
+    def _normalized_days(days: int) -> tuple[int | None, str | None]:
         try:
             normalized = int(days)
         except (TypeError, ValueError, OverflowError):
-            normalized = 60
+            return None, "days 只允许 7、15、30、60"
         if normalized not in ALLOWED_DAYS:
-            return 60, ["days 已限制为 60"]
-        return normalized, []
+            return None, "days 只允许 7、15、30、60"
+        return normalized, None
 
     def path_trend(
         self,
@@ -366,6 +376,15 @@ class AttributionQueryTools:
         record_id: str,
         days: int = 60,
     ) -> dict[str, Any]:
+        normalized_days, days_error = self._normalized_days(days)
+        if days_error:
+            validated_pt, _ = self._validated_pt(pt)
+            return self._envelope(
+                pt=validated_pt,
+                data=None,
+                warnings=[days_error],
+                error=days_error,
+            )
         resolved, error = self._resolve_pt(pt)
         if error:
             return self._envelope(data=None, warnings=[error], error=error)
@@ -373,7 +392,7 @@ class AttributionQueryTools:
         if not RECORD_ID_PATTERN.fullmatch(record_id):
             message = "record_id 格式不合法，应为 12 位十六进制"
             return self._envelope(pt=resolved, data=None, warnings=[message], error=message)
-        normalized_days, warnings = self._normalized_days(days)
+        warnings: list[str] = []
         try:
             payload = self._service.path_trend(
                 record_id=record_id,

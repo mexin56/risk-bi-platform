@@ -9,10 +9,12 @@ from attribution_query_tools import AttributionQueryTools, add_approval_rates
 
 class FakeService:
     def __init__(self):
+        self.latest_partition_calls = 0
         self.dashboard_calls = []
         self.path_trend_calls = []
 
     def latest_partition(self):
+        self.latest_partition_calls += 1
         return "20260902"
 
     def dashboard(self, partition=None, force=False, offset=0):
@@ -166,16 +168,20 @@ def test_missing_rule_returns_structured_error_with_actual_partition():
     assert result["warnings"] == ["pt=20260902 未找到匹配规则：不存在"]
 
 
-def test_path_trend_caps_window_at_sixty_days():
+@pytest.mark.parametrize("pt", ["20260902", None])
+def test_path_trend_rejects_unsupported_window_without_calling_service(pt):
     service = FakeService()
     result = AttributionQueryTools(service).path_trend(
-        "20260902", "aaaaaaaaaaaa", days=90
+        pt, "aaaaaaaaaaaa", days=90
     )
 
-    assert_envelope(result, pt="20260902")
-    assert result["warnings"] == ["days 已限制为 60"]
-    assert len(result["data"]["days"]) == 60
-    assert service.path_trend_calls == [("aaaaaaaaaaaa", "20260902", 0)]
+    assert_envelope(result, pt=pt)
+    assert result["data"] is None
+    assert result["error"] == "days 只允许 7、15、30、60"
+    assert result["warnings"] == ["days 只允许 7、15、30、60"]
+    assert service.latest_partition_calls == 0
+    assert service.dashboard_calls == []
+    assert service.path_trend_calls == []
 
 
 def test_path_trend_uses_allowed_window_and_adds_approval_rates():
@@ -317,4 +323,21 @@ def test_approval_rates_return_none_and_warning_for_zero_denominators():
     assert result["warnings"] == [
         "通过率（人数）分母 cid_cnt 为 0",
         "通过率（件数）分母 cnt 为 0",
+    ]
+
+
+def test_approval_rates_warn_only_for_missing_or_non_numeric_metrics():
+    result = add_approval_rates(
+        {
+            "cid_cnt": 10,
+            "cnt": 20,
+            "approval_cnt": "not-a-number",
+        }
+    )
+
+    assert result["通过率（人数）"] is None
+    assert result["通过率（件数）"] is None
+    assert result["warnings"] == [
+        "通过率（人数）缺少指标 approval_cid_cnt",
+        "通过率（件数）指标 approval_cnt 非数字",
     ]
