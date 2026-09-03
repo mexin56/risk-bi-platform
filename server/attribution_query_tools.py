@@ -361,14 +361,12 @@ class AttributionQueryTools:
         return self._envelope(pt=actual_pt, data=match)
 
     @staticmethod
-    def _normalized_days(days: int) -> tuple[int | None, str | None]:
-        try:
-            normalized = int(days)
-        except (TypeError, ValueError, OverflowError):
+    def _normalized_days(days: Any) -> tuple[int | None, str | None]:
+        if isinstance(days, bool) or not isinstance(days, int):
             return None, "days 只允许 7、15、30、60"
-        if normalized not in ALLOWED_DAYS:
+        if days not in ALLOWED_DAYS:
             return None, "days 只允许 7、15、30、60"
-        return normalized, None
+        return days, None
 
     def path_trend(
         self,

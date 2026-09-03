@@ -184,6 +184,22 @@ def test_path_trend_rejects_unsupported_window_without_calling_service(pt):
     assert service.path_trend_calls == []
 
 
+@pytest.mark.parametrize("days", [7.5, "7.5", True])
+def test_path_trend_rejects_non_integer_days_without_calling_service(days):
+    service = FakeService()
+    result = AttributionQueryTools(service).path_trend(
+        "20260902", "aaaaaaaaaaaa", days=days
+    )
+
+    assert_envelope(result, pt="20260902")
+    assert result["data"] is None
+    assert result["error"] == "days 只允许 7、15、30、60"
+    assert result["warnings"] == ["days 只允许 7、15、30、60"]
+    assert service.latest_partition_calls == 0
+    assert service.dashboard_calls == []
+    assert service.path_trend_calls == []
+
+
 def test_path_trend_uses_allowed_window_and_adds_approval_rates():
     result = AttributionQueryTools(FakeService()).path_trend(
         "20260902", "aaaaaaaaaaaa", days=7
