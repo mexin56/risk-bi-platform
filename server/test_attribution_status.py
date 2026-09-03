@@ -167,6 +167,99 @@ def test_path_rows_start_at_tracking_entry_and_keep_later_zero_days():
     assert by_day["2026-09-02"]["application_count"] == 0
 
 
+@pytest.mark.parametrize("currently_hit", [True, False])
+def test_compute_and_publish_rebuilds_hit_and_non_hit_tracked_rules_from_entry_pt(monkeypatch, currently_hit):
+    import pipeline.cli as cli
+
+    day_before = pd.Timestamp("2026-08-31").date()
+    day_start = pd.Timestamp("2026-09-01").date()
+    day_after = pd.Timestamp("2026-09-02").date()
+    rule = {
+        "canonical_path": "field=tracked",
+        "conditions": [{"field": "field", "value": "tracked"}],
+        "source": "已跟踪规则",
+    }
+    active = {
+        "field=tracked": {
+            "canonical_path": "field=tracked",
+            "status": 2,
+            "rule": rule,
+            "entered_pt": "20260901",
+        }
+    }
+
+    class FakeStatusStore:
+        def get_active_tagged_rules(self):
+            return active
+
+    class FakeRunner:
+        config = {"approval_fields": ["approval"]}
+
+        def __init__(self, **_kwargs):
+            self.filtered_counts = None
+
+        def run(self):
+            return {
+                "meta": {},
+                "merged_alerts": ([{
+                    "id": "tracked-id",
+                    "canonical_path": "field=tracked",
+                    "conditions": rule["conditions"],
+                    "windows": {},
+                }] if currently_hit else []),
+                "suppressed_alerts": [],
+            }
+
+        def paths_exact_daily_batch(self, condition_sets):
+            key = condition_sets[0]["key"]
+            assert key in {"field=tracked", "tracked-id"}
+            return {
+                key: (
+                    pd.Series({day_before: 9.0, day_start: 2.0}),
+                    pd.Series({day_before: 3.0, day_start: 1.0}),
+                    pd.Series(dtype=float),
+                    pd.Series(dtype=float),
+                )
+            }
+
+        def trend_daily_totals(self):
+            return pd.Series({day_before: 10.0, day_start: 12.0, day_after: 14.0})
+
+        def build_tracked_record(self, _rule, counts):
+            self.filtered_counts = counts
+            return {
+                "id": "tracked-id",
+                "canonical_path": "field=tracked",
+                "path": "field=tracked",
+                "source": "已跟踪规则",
+                "level": 0,
+                "level_label": "无预警",
+                "severity": "slate",
+                "conditions": rule["conditions"],
+                "windows": {},
+            }
+
+    captured = {}
+    monkeypatch.setattr(cli, "WarehouseAttributionRunner", FakeRunner)
+    monkeypatch.setattr(cli, "refresh_partition_ranges", lambda *_args: {})
+    monkeypatch.setattr(cli, "publish_result", lambda **kwargs: captured.update(kwargs) or "run-1")
+
+    class FakeService:
+        table_name = "sample_table"
+        _status_store = FakeStatusStore()
+
+        def _run_sql_rows(self, _sql):
+            return []
+
+    stats = cli.compute_and_publish(FakeService(), {}, "20260902", 0, "test")
+
+    assert stats["run_id"] == "run-1"
+    assert captured["result"]["merged_alerts"][0]["tracking_start_pt"] == "20260901"
+    assert captured["result"]["merged_alerts"][0].get("is_tracked_only") is (None if currently_hit else True)
+    assert list(captured["path_rows"][0].keys())
+    assert {row["date"] for row in captured["path_rows"]} == {"2026-09-01", "2026-09-02"}
+
+
 def test_status_history_records_entry_exit_switch_and_reentry(tmp_path):
     store = AttributionStatusStore(tmp_path / "status.sqlite3")
     rule = {"canonical_path": "layer=a", "conditions": [{"field": "x"}]}
