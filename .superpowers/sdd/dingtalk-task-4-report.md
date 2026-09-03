@@ -20,3 +20,21 @@ exit 0
 ## 提交
 
 提交信息：`feat: add dingtalk agent adapter and audit`
+
+## 审查修复（C1/I1/I2/I3）
+
+- `DingTalkSender` 仅允许 HTTPS、标准端口和精确钉钉域名，拒绝 userinfo/任意 host；校验 HTTP JSON `errcode == 0`。
+- Adapter 对 Sender 的非 dict、非 `sent` 返回统一按发送失败处理。
+- mention 仅接受结构化 `atUsers`/`at_user_list` 中匹配配置机器人标识，或明确 verified mention；正文 @ 和伪造布尔字段仅用于清理/不再触发。
+- 审计 finish 对 pt、evidence/path、used_tools、error_summary 递归脱敏并限制长度；新增敏感 answer 回归测试。
+- 测试已更新为受信钉钉 URL，并覆盖 SSRF、errcode、伪造 mention、审计 answer 脱敏。
+
+## 修复后验证
+
+```text
+python -m pytest server/test_dingtalk_agent.py -q
+29 passed in 0.39s
+
+python -m py_compile server/dingtalk_agent.py server/test_dingtalk_agent.py
+exit 0
+```

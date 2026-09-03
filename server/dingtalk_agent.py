@@ -10,6 +10,7 @@ import re
 import sqlite3
 import time
 from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit
 
 
 def _redact(value: Any) -> str:
@@ -22,6 +23,18 @@ def _redact(value: Any) -> str:
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
     return text
+
+
+def _sanitize(value: Any, limit: int = 500) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _sanitize(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize(item, limit) for item in value]
+    return _redact(value)[:limit]
+
+
+def _json_field(value: Any, limit: int = 1000) -> str:
+    return json.dumps(_sanitize(value), ensure_ascii=False)[:limit]
 
 
 @dataclass(frozen=True)
@@ -45,7 +58,14 @@ class DingTalkEvent:
         raw_text = payload.get("text", "")
         text = raw_text.get("content", "") if isinstance(raw_text, dict) else raw_text
         text = str(text or "")
-        mentioned = bool(payload.get("mentioned_agent") or payload.get("isInAtList"))
+        configured = {str(payload.get(name)) for name in ("agent_id", "bot_user_id", "robot_id") if payload.get(name)}
+        structured = payload.get("atUsers") or payload.get("at_user_list") or []
+        mentioned = bool(payload.get("verified_mention") or payload.get("verifiedMention"))
+        if not mentioned and configured and isinstance(structured, list):
+            for item in structured:
+                values = [item] if isinstance(item, str) else [item.get(key) for key in ("id", "userId", "user_id", "staffId", "dingtalkId") if isinstance(item, dict)]
+                if any(str(value) in configured for value in values if value is not None):
+                    mentioned = True
         mentioned = mentioned or bool(re.search(r"@(授信归因助手|授权归因助手|助手)", text))
         cleaned = re.sub(r"@(?:授信归因助手|授权归因助手|助手)", " ", text)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -53,6 +73,11 @@ class DingTalkEvent:
         target = {"conversation_id": str(group_id)}
         if webhook:
             target["webhook_url"] = str(webhook)
+        mentioned = bool(payload.get("verified_mention") or payload.get("verifiedMention"))
+        if not mentioned and configured and isinstance(structured, list):
+            for item in structured:
+                values = [item] if isinstance(item, str) else [item.get(key) for key in ("id", "userId", "user_id", "staffId", "dingtalkId") if isinstance(item, dict)]
+                mentioned = mentioned or any(str(value) in configured for value in values if value is not None)
         return cls(str(message_id), str(group_id), str(user_id), cleaned, mentioned, target)
 
 
@@ -88,10 +113,9 @@ class AgentAuditStore:
         with sqlite3.connect(self.path) as db:
             db.execute("""UPDATE agent_audit SET status=?, pt=?, paths_json=?, tools_json=?,
                 elapsed_ms=?, error_summary=?, finished_at=? WHERE message_id=?""",
-                (status, str(answer.get("pt", "")), json.dumps(
+                (status, _sanitize(answer.get("pt", "")), _json_field(
                     [item.get("path", item) if isinstance(item, Mapping) else item
-                     for item in answer.get("evidence", [])], ensure_ascii=False),
-                 json.dumps(answer.get("used_tools", []), ensure_ascii=False), elapsed_ms,
+                     for item in answer.get("evidence", [])]), _json_field(answer.get("used_tools", [])), elapsed_ms,
                  _redact(error_summary)[:500], now, str(message_id)))
 
     def fetch(self, message_id: str) -> dict[str, Any] | None:
@@ -113,10 +137,21 @@ class DingTalkSender:
         if not isinstance(reply_target, dict) or not reply_target.get("webhook_url") or not isinstance(markdown, str):
             return {"status": "failed", "error": "send_failed"}
         try:
+            parsed = urlsplit(reply_target["webhook_url"])
+            if (parsed.scheme != "https" or parsed.hostname not in {"oapi.dingtalk.com", "api.dingtalk.com"}
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.port not in (None, 443)):
+                return {"status": "failed", "error": "send_failed"}
+        except ValueError:
+            return {"status": "failed", "error": "send_failed"}
+        try:
             response = self.post(reply_target["webhook_url"], json={
                 "msgtype": "markdown", "markdown": {"title": "授信归因助手", "text": markdown}
             }, timeout=self.timeout_seconds)
             response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or body.get("errcode") != 0:
+                return {"status": "failed", "error": "send_failed"}
             return {"status": "sent"}
         except Exception:
             return {"status": "failed", "error": "send_failed"}
@@ -139,6 +174,13 @@ class DingTalkAdapter:
         self.config, self.agent, self.sender, self.audit = config, agent, sender, audit_store
 
     def handle(self, payload: dict) -> dict:
+        payload = dict(payload) if isinstance(payload, dict) else payload
+        if isinstance(payload, dict) and not any(payload.get(name) for name in ("agent_id", "bot_user_id", "robot_id")):
+            for name in ("agent_id", "bot_user_id", "robot_id"):
+                value = getattr(self.config, name, None)
+                if value:
+                    payload[name] = value
+                    break
         event = DingTalkEvent.from_payload(payload)
         if event is None:
             return {"status": "failed", "error": "invalid_event"}
@@ -165,9 +207,10 @@ class DingTalkAdapter:
         if event.group_id not in groups or event.user_id not in users:
             try:
                 result = self.sender.send(event.reply_target, "## 授权提示\n当前会话未授权。")
-                if isinstance(result, dict) and result.get("status") == "failed":
-                    finish("failed", error=result.get("error", "send_failed"))
-                    return {"status": "failed", "error": result.get("error", "send_failed")}
+                if not isinstance(result, dict) or result.get("status") != "sent":
+                    error = result.get("error", "send_failed") if isinstance(result, dict) else "send_failed"
+                    finish("failed", error=error)
+                    return {"status": "failed", "error": error}
             except Exception as exc:
                 finish("failed", error=str(exc))
                 return {"status": "failed", "error": "send_failed"}
@@ -180,9 +223,10 @@ class DingTalkAdapter:
             return {"status": "failed", "error": "processing_failed"}
         try:
             result = self.sender.send(event.reply_target, _markdown(answer))
-            if isinstance(result, dict) and result.get("status") == "failed":
-                finish("failed", answer, result.get("error", "send_failed"))
-                return {"status": "failed", "error": result.get("error", "send_failed")}
+            if not isinstance(result, dict) or result.get("status") != "sent":
+                error = result.get("error", "send_failed") if isinstance(result, dict) else "send_failed"
+                finish("failed", answer, error)
+                return {"status": "failed", "error": error}
         except Exception as exc:
             finish("failed", answer, str(exc))
             return {"status": "failed", "error": "send_failed"}

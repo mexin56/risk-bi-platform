@@ -50,6 +50,7 @@ def config(**overrides):
         "allowed_user_ids": frozenset({"u1"}),
         "app_secret": "DING-SECRET-VALUE",
         "api_key": "AI-SECRET-VALUE",
+        "bot_user_id": "bot-1",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -71,6 +72,8 @@ def make_adapter(tmp_path, **kwargs):
             "conversationId": "g1",
             "senderId": "u1",
             "text": "@授信归因助手  最新风险",
+            "atUsers": [{"dingtalkId": "bot-1"}],
+            "bot_user_id": "bot-1",
             "sessionWebhook": "https://oapi.example/reply",
         },
         {
@@ -79,6 +82,8 @@ def make_adapter(tmp_path, **kwargs):
             "senderStaffId": "u1",
             "text": {"content": "最新风险"},
             "isInAtList": True,
+            "at_user_list": [{"userId": "bot-1"}],
+            "bot_user_id": "bot-1",
             "sessionWebhook": "https://oapi.example/reply",
             "database_password": "must-not-cross-boundary",
         },
@@ -119,6 +124,21 @@ def test_non_mention_is_ignored_before_agent(tmp_path):
     assert store.fetch("m2")["status"] == "ignored"
 
 
+def test_untrusted_mention_fields_and_body_do_not_trigger_agent(tmp_path):
+    adapter, agent, sender, store = make_adapter(tmp_path)
+    for message_id, extra in (
+        ("fake-flag", {"mentioned_agent": True, "isInAtList": True}),
+        ("fake-body", {}),
+    ):
+        payload = {
+            "messageId": message_id, "conversationId": "g1", "senderId": "u1",
+            "text": "@助手 风险", **extra,
+        }
+        assert adapter.handle(payload) == {"status": "ignored"}
+    assert agent.calls == []
+    assert sender.messages == []
+
+
 @pytest.mark.parametrize(
     ("overrides", "payload"),
     [
@@ -132,7 +152,7 @@ def test_empty_or_non_exact_allowlists_are_forbidden_without_business_data(
     tmp_path, overrides, payload
 ):
     adapter, agent, sender, store = make_adapter(tmp_path, config=config(**overrides))
-    payload.update({"messageId": "m3", "text": "@助手 最新 Level3 风险"})
+    payload.update({"messageId": "m3", "text": "@助手 最新 Level3 风险", "atUsers": [{"id": "bot-1"}]})
     result = adapter.handle(payload)
     assert result == {"status": "forbidden"}
     assert agent.calls == []
@@ -144,7 +164,8 @@ def test_empty_or_non_exact_allowlists_are_forbidden_without_business_data(
 def test_disabled_adapter_is_quiet_and_does_not_call_dependencies(tmp_path):
     adapter, agent, sender, store = make_adapter(tmp_path, config=config(enabled=False))
     result = adapter.handle(
-        {"messageId": "m4", "conversationId": "g1", "senderId": "u1", "text": "@助手 风险"}
+        {"messageId": "m4", "conversationId": "g1", "senderId": "u1", "text": "@助手 风险",
+         "atUsers": [{"id": "bot-1"}]}
     )
     assert result == {"status": "ignored"}
     assert agent.calls == []
@@ -155,7 +176,8 @@ def test_disabled_adapter_is_quiet_and_does_not_call_dependencies(tmp_path):
 def test_success_cleans_mention_injects_safe_context_and_sends_public_markdown(tmp_path):
     adapter, agent, sender, store = make_adapter(tmp_path)
     result = adapter.handle(
-        {"messageId": "m5", "conversationId": "g1", "senderId": "u1", "text": " @助手   最新风险 "}
+        {"messageId": "m5", "conversationId": "g1", "senderId": "u1", "text": " @助手   最新风险 ",
+         "atUsers": [{"id": "bot-1"}]}
     )
     assert result == {"status": "replied"}
     assert agent.calls == [("最新风险", {"group_id": "g1", "user_id": "u1"})]
@@ -172,7 +194,8 @@ def test_success_cleans_mention_injects_safe_context_and_sends_public_markdown(t
 
 def test_sqlite_primary_key_deduplicates_before_agent_and_reply(tmp_path):
     adapter, agent, sender, store = make_adapter(tmp_path)
-    payload = {"messageId": "m6", "conversationId": "g1", "senderId": "u1", "text": "@助手 最新pt"}
+    payload = {"messageId": "m6", "conversationId": "g1", "senderId": "u1", "text": "@助手 最新pt",
+               "atUsers": [{"id": "bot-1"}]}
     assert adapter.handle(payload) == {"status": "replied"}
     assert adapter.handle(payload) == {"status": "duplicate"}
     assert len(agent.calls) == 1
@@ -195,7 +218,8 @@ def test_processing_and_sender_failures_are_structured_and_sanitized(
     agent = FakeAgent(error=agent_error)
     adapter, _, _, store = make_adapter(tmp_path, agent=agent, sender=sender)
     result = adapter.handle(
-        {"messageId": "m7", "conversationId": "g1", "senderId": "u1", "text": "@助手 风险"}
+        {"messageId": "m7", "conversationId": "g1", "senderId": "u1", "text": "@助手 风险",
+         "atUsers": [{"id": "bot-1"}]}
     )
     assert result["status"] == "failed"
     assert result["error"] in {"processing_failed", "send_failed", "remote_rejected"}
@@ -235,6 +259,27 @@ def test_audit_schema_and_question_redaction_are_bounded(tmp_path):
     }
 
 
+def test_audit_finish_redacts_and_bounds_answer_fields(tmp_path):
+    store = AgentAuditStore(tmp_path / "audit.sqlite3")
+    assert store.record_start("m-sensitive", "g1", "u1", "safe") is True
+    store.record_finish(
+        "m-sensitive", status="replied",
+        answer={
+            "pt": "password=DBPASS " + "x" * 600,
+            "evidence": [{"path": "token=RAW 13812345678 device_id=DEV-123 " + "y" * 600}],
+            "used_tools": ["api_key=KEY", "safe_tool"],
+        }, error_summary="secret=ERR " + "z" * 600,
+    )
+    row = store.fetch("m-sensitive")
+    serialized = json.dumps(row, ensure_ascii=False)
+    assert len(row["pt"]) <= 500
+    assert len(row["paths_json"]) <= 1000
+    assert len(row["tools_json"]) <= 1000
+    assert len(row["error_summary"]) <= 500
+    for value in ("DBPASS", "RAW", "13812345678", "DEV-123", "KEY", "ERR"):
+        assert value not in serialized
+
+
 def test_sender_posts_only_normalized_markdown_and_returns_structured_failures():
     captured = {}
 
@@ -251,16 +296,48 @@ def test_sender_posts_only_normalized_markdown_and_returns_structured_failures()
 
     sender = DingTalkSender(post=post, timeout_seconds=3)
     result = sender.send(
-        {"conversation_id": "g1", "webhook_url": "https://oapi.example/reply"},
+        {"conversation_id": "g1", "webhook_url": "https://oapi.dingtalk.com/reply"},
         "## 安全响应",
     )
     assert result == {"status": "sent"}
     assert captured == {
-        "url": "https://oapi.example/reply",
+            "url": "https://oapi.dingtalk.com/reply",
         "json": {"msgtype": "markdown", "markdown": {"title": "授信归因助手", "text": "## 安全响应"}},
         "timeout": 3,
     }
     assert DingTalkSender(post=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("secret=x"))).send(
-        {"conversation_id": "g1", "webhook_url": "https://oapi.example/reply"}, "ok"
+        {"conversation_id": "g1", "webhook_url": "https://oapi.dingtalk.com/reply"}, "ok"
     ) == {"status": "failed", "error": "send_failed"}
 
+
+@pytest.mark.parametrize("url", [
+    "http://oapi.dingtalk.com/reply", "https://evil.example/reply",
+    "https://oapi.dingtalk.com.evil/reply", "https://user:pass@oapi.dingtalk.com/reply",
+    "https://oapi.dingtalk.com:8443/reply",
+])
+def test_sender_rejects_ssrf_targets_without_post(url):
+    called = []
+    sender = DingTalkSender(post=lambda *args, **kwargs: called.append(args))
+    assert sender.send({"conversation_id": "g1", "webhook_url": url}, "ok") == {
+        "status": "failed", "error": "send_failed"
+    }
+    assert called == []
+
+
+@pytest.mark.parametrize("response", [
+    SimpleNamespace(raise_for_status=lambda self: None, json=lambda self: {"errcode": 1}),
+    SimpleNamespace(raise_for_status=lambda self: None, json=lambda self: {"errcode": "0"}),
+    SimpleNamespace(raise_for_status=lambda self: None, json=lambda self: []),
+])
+def test_sender_requires_json_errcode_zero(response):
+    sender = DingTalkSender(post=lambda *args, **kwargs: response)
+    assert sender.send({"conversation_id": "g1", "webhook_url": "https://api.dingtalk.com/reply"}, "ok") == {
+        "status": "failed", "error": "send_failed"
+    }
+
+
+def test_adapter_rejects_non_sent_sender_result(tmp_path):
+    adapter, agent, sender, store = make_adapter(tmp_path, sender=FakeSender(result={"status": "weird"}))
+    result = adapter.handle({"messageId": "m9", "conversationId": "g1", "senderId": "u1",
+                             "text": "@助手 风险", "atUsers": [{"id": "bot-1"}]})
+    assert result == {"status": "failed", "error": "send_failed"}
