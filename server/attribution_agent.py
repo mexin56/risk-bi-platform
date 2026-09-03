@@ -164,6 +164,11 @@ class OpenAICompatibleClient:
 class AttributionAgent:
     """Parse questions and orchestrate only the seven fixed read-only tools."""
 
+    _SQL_RE = re.compile(
+        r"(?is)\b(?:select|insert|update|delete|drop|alter|create|truncate|merge|grant|revoke)\b"
+        r".*?(?=[；;\r\n]|$)"
+    )
+
     def __init__(
         self,
         query_tools: Any,
@@ -293,8 +298,14 @@ class AttributionAgent:
         current_time: str,
         results: list[dict[str, Any]],
     ) -> list[dict[str, str]]:
+        safe_question = re.sub(r"(?s)/\*.*?\*/", "[已移除不安全内容]", question)
+        safe_question = re.sub(r"(?m)--.*$", "[已移除不安全内容]", safe_question)
+        safe_question = self._SQL_RE.sub("[已移除不安全内容]", safe_question)
+        for secret in (self.config.app_secret, self.config.api_key):
+            if secret:
+                safe_question = safe_question.replace(secret, "[已移除敏感信息]")
         safe_payload = {
-            "question": question,
+            "question": safe_question,
             "current_time": current_time,
             "rules": [
                 "只根据白名单工具结果回答",

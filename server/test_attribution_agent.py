@@ -324,6 +324,19 @@ def test_model_input_excludes_secrets_database_credentials_and_sql():
     assert "2026-09-03T10:30:00+08:00" in prompt
 
 
+def test_model_input_redacts_sql_embedded_in_user_question():
+    tools = FakeTools()
+    client = RecordingClient()
+    AttributionAgent(tools, AgentConfig(), client=client).answer(
+        "看最新等级；select password from credentials; drop table audit", {}
+    )
+
+    prompt = json.dumps(client.messages, ensure_ascii=False).lower()
+    assert "select password" not in prompt
+    assert "drop table" not in prompt
+    assert "看最新等级" in prompt
+
+
 def test_model_failure_returns_data_answer_without_inventing_conclusion():
     class BrokenClient:
         def complete(self, messages):
@@ -419,3 +432,28 @@ def test_openai_client_rejects_incomplete_configuration_without_http(config, mon
     with pytest.raises(RuntimeError, match="AI client is not configured"):
         OpenAICompatibleClient(config).complete([])
     assert called is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"choices": []},
+        {"choices": [{"message": {"content": ""}}]},
+    ],
+)
+def test_openai_client_raises_catchable_error_for_invalid_json_shape(payload, monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(
+        "attribution_agent.requests.post", lambda *args, **kwargs: FakeResponse()
+    )
+    config = AgentConfig(base_url="https://ai.example", api_key="k", model="m")
+
+    with pytest.raises(RuntimeError):
+        OpenAICompatibleClient(config).complete([])
