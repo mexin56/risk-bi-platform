@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
+import math
 import os
 import re
 import sqlite3
@@ -40,6 +42,83 @@ def _compact_rule(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_risk_points(
+    payload: dict[str, Any],
+    level_counts: dict[str, int],
+    active_hits: list[dict[str, Any]],
+    active_misses: list[dict[str, Any]],
+) -> list[str]:
+    summary = payload.get("summary") or {}
+    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
+    focus = payload.get("highlight") if isinstance(payload.get("highlight"), dict) else None
+    if focus is None and alerts:
+        focus = max(
+            alerts,
+            key=lambda item: (
+                int(item.get("level", 0) or 0),
+                float(item.get("z_score", 0) or 0),
+            ),
+        )
+
+    level3 = level_counts["3"]
+    if focus and int(focus.get("level", 0) or 0) >= 3:
+        windows = "、".join(str(value) for value in (focus.get("hit_windows") or [])) or "当前窗口"
+        growth = float(focus.get("growth_factor", 0) or 0)
+        z_score = float(focus.get("z_score", 0) or 0)
+        point1 = (
+            f"高风险预警：当前 Level3 红色规则 {level3} 条；重点路径 **{focus.get('path') or '未命名规则'}** "
+            f"在 {focus.get('primary_window_label') or '观察窗口'} 命中 {windows}，增长 {growth:.2f} 倍、z-score {z_score:.2f}，请优先核查。"
+        )
+    else:
+        point1 = f"高风险预警：当前 Level3 红色规则 {level3} 条，暂未发现需要优先升级的 Level3 重点路径。"
+
+    level23 = level_counts["2"] + level_counts["3"]
+    total = max(1, int(summary.get("merged_alert_count", len(alerts)) or 0))
+    share = level23 / total * 100
+    change = float(summary.get("latest_day_change_pct", 0) or 0)
+    point2 = (
+        f"趋势与结构风险：Level2+Level3 共 {level23} 条，占全部预警 {share:.2f}%；"
+        f"最新日申请量较前一日 {'增长' if change >= 0 else '下降'} {abs(change):.2f}%，建议重点排查集中来源和连续命中窗口。"
+    )
+
+    if active_hits or active_misses:
+        hit_names = "、".join(item["path"] for item in active_hits[:2]) or "无"
+        miss_names = "、".join(item["path"] for item in active_misses[:2]) or "无"
+        point3 = (
+            f"持续跟踪风险：当前仍命中的打标规则 {len(active_hits)} 条（{hit_names}），"
+            f"本日未命中，仍在持续跟踪 {len(active_misses)} 条（{miss_names}），请持续关注后续 pt。"
+        )
+    else:
+        point3 = (
+            f"通过率风险：最新日件数通过率 {_fmt_pct(summary.get('latest_approval_rate'))}，"
+            f"人数通过率 {_fmt_pct(summary.get('latest_cid_approval_rate_pct'))}；请关注两项指标与异常规则是否同步变化。"
+        )
+    tracked_hit_names = "\u3001".join(item["path"] for item in active_hits[:2]) or "\u65e0"
+    tracked_miss_names = "\u3001".join(item["path"] for item in active_misses[:2]) or "\u65e0"
+    point3 = (
+        f"\u6301\u7eed\u8ddf\u8e2a\u98ce\u9669\uff1a\u5f53\u524d\u4ecd\u547d\u4e2d\u7684\u6253\u6807\u89c4\u5219 {len(active_hits)} \u6761\uff08{tracked_hit_names}\uff09\uff0c"
+        f"\u672c\u65e5\u672a\u547d\u4e2d\uff0c\u4ecd\u5728\u6301\u7eed\u8ddf\u8e2a {len(active_misses)} \u6761\uff08{tracked_miss_names}\uff09\uff0c\u8bf7\u6301\u7eed\u5173\u6ce8\u540e\u7eed pt\u3002"
+    )
+    return [point1, point3]
+
+
+def _build_level3_risk_points(
+    payload: dict[str, Any],
+    level_counts: dict[str, int],
+) -> list[str]:
+    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
+    highlight = payload.get("highlight")
+    if not isinstance(highlight, dict) or int(highlight.get("level", 0) or 0) < 3:
+        l3_alerts = [item for item in alerts if int(item.get("level", 0) or 0) >= 3]
+        highlight = max(
+            l3_alerts,
+            key=lambda item: float(item.get("z_score", 0) or 0),
+            default=None,
+        )
+    path = (highlight or {}).get("path") if isinstance(highlight, dict) else None
+    return [f"重点路径：{path or '当前无 Level3 重点路径'}\n请优先核查"]
+
+
 def build_digest(
     payload: dict[str, Any],
     *,
@@ -59,7 +138,7 @@ def build_digest(
     active_misses = [_compact_rule(item) for item in tracked if item.get("is_tracked_only")]
     active_hits.sort(key=lambda item: (-int(item["level"]), str(item["path"])))
     active_misses.sort(key=lambda item: str(item["path"]))
-    return {
+    digest = {
         "partition": str(meta.get("partition") or "未知 pt"),
         "generated_at": str(meta.get("generated_at") or ""),
         "alert_total": int(summary.get("merged_alert_count", len(alerts)) or 0),
@@ -72,6 +151,8 @@ def build_digest(
         "report_url": report_url,
         "page_url": page_url,
     }
+    digest["risk_points"] = _build_risk_points(payload, level_counts, active_hits, active_misses)
+    return digest
 
 
 def _fmt_pct(value: Any) -> str:
@@ -86,33 +167,17 @@ def _fmt_pct(value: Any) -> str:
 def format_markdown(digest: dict[str, Any]) -> str:
     counts = digest["level_counts"]
     lines = [
-        "### 授信归因日报",
+        "# 授信归因日报",
         "",
         f"数据分区：`{digest['partition']}`",
-        f"预警规则：{digest['alert_total']} 条（Level1：{counts['1']}，Level2：{counts['2']}，Level3：{counts['3']}）",
-        f"最新日申请量：{digest['latest_application_count']}，件数通过率：{_fmt_pct(digest['latest_approval_rate'])}，人数通过率：{_fmt_pct(digest['latest_cid_approval_rate_pct'])}",
         "",
-        "#### 持续跟踪且当前仍命中",
     ]
-    hits = digest.get("active_hits") or []
-    if hits:
-        for item in hits:
-            windows = "、".join(item["hit_windows"]) or "当前窗口"
-            lines.append(
-                f"- `{item['path']}`：{item['status_label']}，{item['level_label']}，命中 {windows}；请持续关注。"
-            )
-    else:
-        lines.append("- 当前没有持续跟踪且仍命中的规则。")
-
-    lines.extend(["", "#### 持续跟踪但本日未命中"])
-    misses = digest.get("active_misses") or []
-    if misses:
-        for item in misses:
-            lines.append(
-                f"- `{item['path']}`：{item['status_label']}，本日未命中，仍在持续跟踪（起始 pt：{item['tracking_start_pt'] or '未知'}）。"
-            )
-    else:
-        lines.append("- 无。")
+    for index, point in enumerate(digest.get("risk_points") or [], start=1):
+        point_lines = str(point).splitlines()
+        if point_lines:
+            lines.append(f"{index}. {point_lines[0]}")
+            lines.extend(point_lines[1:])
+            lines.append("")
 
     report_url = digest.get("report_url")
     page_url = digest.get("page_url")
@@ -121,6 +186,20 @@ def format_markdown(digest: dict[str, Any]) -> str:
     if page_url:
         lines.append(f"[打开授信归因页面]({page_url})")
     return "\n".join(lines)
+
+
+def format_s3_summary_markdown(
+    digest: dict[str, Any],
+    *,
+    image_url: str,
+    page_url: str | None = None,
+) -> str:
+    """Format the text follow-up sent after the S3 image preview."""
+    summary = format_markdown({**digest, "report_url": None, "page_url": None})
+    links = [f"## [3、查看原图]({image_url})"]
+    if page_url:
+        links.append(f"[查看明细]({page_url})")
+    return summary + "\n\n" + "　　".join(links)
 
 
 class DingTalkNotifier:
@@ -152,6 +231,131 @@ class DingTalkNotifier:
         if result.get("errcode") != 0:
             raise RuntimeError(f"钉钉发送失败：{result}")
         return result
+
+
+class S3PngDingTalkNotifier:
+    """Upload a PNG report to S3 and send its public URL through DingTalk."""
+
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        region: str,
+        prefix: str,
+        webhook_url: str,
+        webhook_secret: str,
+        public_base_url: str | None = None,
+        s3_client: Any | None = None,
+        session: Any | None = None,
+        timeout: int = 30,
+    ) -> None:
+        self.bucket = bucket.strip()
+        self.region = region.strip()
+        self.prefix = prefix.strip().strip("/")
+        self.webhook_url = webhook_url.strip()
+        self.webhook_secret = webhook_secret.strip()
+        self.public_base_url = (public_base_url or "").strip().rstrip("/")
+        self.s3_client = s3_client
+        self.session = session or requests.Session()
+        self.timeout = timeout
+        missing = [
+            name
+            for name, value in (
+                ("bucket", self.bucket),
+                ("region", self.region),
+                ("webhook_url", self.webhook_url),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"S3/转换服务配置缺失: {', '.join(missing)}")
+
+    def _get_s3_client(self) -> Any:
+        if self.s3_client is None:
+            try:
+                import boto3
+            except ImportError as exc:
+                raise RuntimeError("S3 推送需要安装 boto3") from exc
+            self.s3_client = boto3.client("s3", region_name=self.region)
+        return self.s3_client
+
+    def publish(self, png_path: Path, pt: str) -> dict[str, Any]:
+        normalized_pt = str(pt).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_pt):
+            raise ValueError("非法 pt")
+        source = Path(png_path)
+        if source.suffix.lower() != ".png" or not source.is_file():
+            raise ValueError("PNG 截图文件不存在或格式不正确")
+        filename = f"credit_attribution_{normalized_pt}.png"
+        object_name = f"{self.prefix}/{filename}" if self.prefix else filename
+        self._get_s3_client().upload_file(
+                str(source),
+                self.bucket,
+                object_name,
+                ExtraArgs={"ContentType": "image/png", "ACL": "public-read"},
+            )
+        image_url = self._public_url(object_name)
+        response = self.session.post(
+            self._signed_webhook_url(),
+            json={"msgtype": "image", "image": {"picURL": image_url}},
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if "errcode" in result and str(result["errcode"]) != "0":
+            raise RuntimeError(f"钉钉图片消息发送失败: {result}")
+        if "success" in result and result["success"] is False:
+            raise RuntimeError(f"钉钉图片消息发送失败: {result}")
+        return {"object_name": object_name, "image_url": image_url, "response": result}
+
+    def _public_url(self, object_name: str) -> str:
+        if self.public_base_url:
+            return f"{self.public_base_url}/{urllib.parse.quote(object_name, safe='/')}"
+        return f"https://{self.bucket}.s3.{self.region}.amazonaws.com/{urllib.parse.quote(object_name, safe='/')}"
+
+    def _signed_webhook_url(self) -> str:
+        if not self.webhook_secret:
+            return self.webhook_url
+        timestamp = str(round(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{self.webhook_secret}".encode("utf-8")
+        digest = hmac.new(
+            self.webhook_secret.encode("utf-8"), string_to_sign, hashlib.sha256
+        ).digest()
+        separator = "&" if "?" in self.webhook_url else "?"
+        sign = urllib.parse.quote_plus(base64.b64encode(digest))
+        return f"{self.webhook_url}{separator}timestamp={timestamp}&sign={sign}"
+
+    def send_markdown(self, markdown: str, *, title: str = "授信归因日报") -> dict[str, Any]:
+        response = self.session.post(
+            self._signed_webhook_url(),
+            json={"msgtype": "markdown", "markdown": {"title": title, "text": markdown}},
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if "errcode" in result and str(result["errcode"]) != "0":
+            raise RuntimeError(f"钉钉总结消息发送失败: {result}")
+        if "success" in result and result["success"] is False:
+            raise RuntimeError(f"钉钉总结消息发送失败: {result}")
+        return result
+
+
+def s3_notifier_from_env() -> S3PngDingTalkNotifier | None:
+    """Build the S3 PNG delivery adapter only when its configuration exists."""
+    settings = {
+        "bucket": os.getenv("DINGTALK_S3_BUCKET", ""),
+        "region": os.getenv("DINGTALK_S3_REGION", "eu-west-1"),
+        "prefix": os.getenv("DINGTALK_S3_PREFIX", "credit_attribution"),
+        "webhook_url": os.getenv("DINGTALK_WEBHOOK_URL", ""),
+        "webhook_secret": os.getenv("DINGTALK_SECRET", ""),
+        "public_base_url": os.getenv("DINGTALK_S3_PUBLIC_BASE_URL", ""),
+    }
+    required = ("bucket", "webhook_url")
+    if not all(str(settings[name]).strip() for name in required):
+        return None
+    return S3PngDingTalkNotifier(**settings)
 
 
 def report_path_is_safe(report_dir: Path, filename: str) -> Path:
@@ -194,22 +398,119 @@ def capture_attribution_page(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(**browser_launch_options())
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+            page.add_init_script(theme_init_script(os.getenv("ATTRIBUTION_NOTIFY_THEME", "teal").strip() or "teal"))
             page.goto(web_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            username_input = page.locator("input[autocomplete='username']")
+            username_input = page.locator(login_username_selector())
             if username_input.count() > 0:
                 if not username or not password:
                     raise ValueError("截图页面需要登录，但未配置 ATTRIBUTION_NOTIFY_USERNAME/PASSWORD")
                 username_input.fill(username)
-                page.locator("input[autocomplete='current-password']").fill(password)
-                page.locator("form").press("Enter")
-            page.wait_for_selector("text=授信归因", timeout=timeout_ms)
-            page.screenshot(path=str(output_path), full_page=True)
+                page.locator(login_password_selector()).fill(password)
+                page.locator(login_submit_selector()).click()
+            page.wait_for_selector(attribution_ready_selector(), state="attached", timeout=timeout_ms)
+            trend = page.locator(attribution_trend_selector())
+            trend.wait_for(state="attached", timeout=timeout_ms)
+            page.wait_for_function(
+                trend_ready_expression(),
+                arg=attribution_trend_selector(),
+                timeout=timeout_ms,
+            )
+            content = page.locator(attribution_content_selector())
+            # The application uses a fixed-height <main> with its own scrollbar.
+            # A normal full_page screenshot only captures document.body, so the
+            # lower trend chart would otherwise be outside the captured bitmap.
+            page.evaluate(flatten_scroll_container())
+            page.wait_for_timeout(300)
+            content_box = content.bounding_box()
+            if content_box is None:
+                raise RuntimeError("授信归因内容区没有可截图边界")
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(300)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(300)
+            full_page_path = output_path.with_suffix(".full.png")
+            page.screenshot(path=str(full_page_path), full_page=True)
+            from PIL import Image
+
+            with Image.open(full_page_path) as image:
+                image.crop(content_crop_box(content_box)).save(output_path, format="PNG")
+            full_page_path.unlink(missing_ok=True)
         finally:
             browser.close()
     return output_path
+
+
+def browser_launch_options() -> dict[str, Any]:
+    options: dict[str, Any] = {"headless": True}
+    executable = os.getenv("ATTRIBUTION_BROWSER_EXECUTABLE_PATH", "").strip()
+    if executable:
+        options["executable_path"] = executable
+    return options
+
+
+def login_submit_selector() -> str:
+    return "button[type='submit']"
+
+
+def login_username_selector() -> str:
+    return "input[autocomplete='username'], input[placeholder='请输入用户名']"
+
+
+def login_password_selector() -> str:
+    return "input[autocomplete='current-password'], input[placeholder='请输入密码']"
+
+
+def attribution_ready_selector() -> str:
+    return attribution_content_selector()
+
+
+def attribution_content_selector() -> str:
+    return "[data-testid='credit-attribution-content']"
+
+
+def attribution_trend_selector() -> str:
+    return "[data-testid='credit-attribution-trend-chart']"
+
+
+def trend_ready_expression() -> str:
+    return "selector => Boolean(document.querySelector(selector)?.querySelector('canvas'))"
+
+
+def flatten_scroll_container() -> str:
+    """Return the JS used to expose the app's internal scroll content."""
+    return """
+        () => {
+            const main = document.querySelector('main');
+            let element = main;
+            while (element && element !== document.body) {
+                element.style.overflow = 'visible';
+                element.style.height = 'auto';
+                element.style.minHeight = '0';
+                element.style.maxHeight = 'none';
+                element = element.parentElement;
+            }
+            document.documentElement.style.height = 'auto';
+            document.body.style.height = 'auto';
+            document.body.style.overflow = 'visible';
+        }
+    """
+
+
+def theme_init_script(theme_key: str) -> str:
+    """Return a safe init script that selects the notification screenshot theme."""
+    encoded = json.dumps(str(theme_key).strip() or "teal")
+    return f"localStorage.setItem('rc-bi-theme', {encoded});"
+
+
+def content_crop_box(box: dict[str, float]) -> tuple[int, int, int, int]:
+    left = math.floor(float(box["x"]))
+    top = math.floor(float(box["y"]))
+    right = math.ceil(float(box["x"]) + float(box["width"]))
+    bottom = math.ceil(float(box["y"]) + float(box["height"]))
+    return left, top, right, bottom
 
 
 class NotificationLedger:

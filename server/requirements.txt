@@ -6,3 +6,4 @@ numpy>=1.24
 duckdb>=1.0
 dagster>=1.8
 dagster-webserver>=1.8
+boto3>=1.34
