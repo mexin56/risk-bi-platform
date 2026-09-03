@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import requests
 
 from attribution_agent import (
     AgentAnswer,
@@ -337,28 +338,75 @@ def test_model_input_redacts_sql_embedded_in_user_question():
     assert "看最新等级" in prompt
 
 
-def test_model_failure_returns_data_answer_without_inventing_conclusion():
+def test_model_failure_returns_data_answer_without_inventing_conclusion(caplog):
     class BrokenClient:
         def complete(self, messages):
-            raise TimeoutError("timeout containing secret")
+            raise TimeoutError(
+                "timeout DING-SECRET-VALUE select password from credentials"
+            )
 
     agent = AttributionAgent(FakeTools(), AgentConfig(), client=BrokenClient())
-    answer = agent.answer("看最新等级", {"group_id": "g", "user_id": "u"})
+    with caplog.at_level("WARNING", logger="attribution_agent"):
+        answer = agent.answer("看最新等级", {"group_id": "g", "user_id": "u"})
 
     assert "AI 总结暂不可用" in answer.conclusion
     assert "secret" not in answer.conclusion
     assert answer.evidence
     assert answer.evidence[0]["result"]["source"] == "duckdb/serving"
+    assert "attribution agent model fallback: timeout" in caplog.text
+    assert "DING-SECRET-VALUE" not in caplog.text
+    assert "select password" not in caplog.text.lower()
 
 
-def test_model_numbers_not_present_in_tool_results_are_rejected():
+def test_model_numbers_not_present_in_tool_results_are_rejected(caplog):
     client = RecordingClient("当前有 999 条高风险规则。")
-    answer = AttributionAgent(FakeTools(), AgentConfig(), client=client).answer(
-        "看最新等级", {}
-    )
+    with caplog.at_level("WARNING", logger="attribution_agent"):
+        answer = AttributionAgent(FakeTools(), AgentConfig(), client=client).answer(
+            "看最新等级", {}
+        )
 
     assert "999" not in answer.conclusion
     assert "AI 总结暂不可用" in answer.conclusion
+    assert "attribution agent model fallback: unsafe_content" in caplog.text
+
+
+def test_missing_model_client_logs_sanitized_fallback_warning(caplog):
+    with caplog.at_level("WARNING", logger="attribution_agent"):
+        answer = AttributionAgent(FakeTools(), AgentConfig(), client=None).answer(
+            "看最新等级 select password from credentials", {}
+        )
+
+    assert "AI 总结暂不可用" in answer.conclusion
+    assert "attribution agent model fallback: not_configured" in caplog.text
+    assert "select password" not in caplog.text.lower()
+
+
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (requests.HTTPError("AI-SECRET-VALUE select * from secret"), "http_error"),
+        (
+            requests.exceptions.JSONDecodeError(
+                "AI-SECRET-VALUE select", "select * from secret", 0
+            ),
+            "json_error",
+        ),
+        (RuntimeError("invalid response AI-SECRET-VALUE select"), "invalid_response"),
+    ],
+)
+def test_model_errors_log_only_fixed_fallback_category(error, category, caplog):
+    class BrokenClient:
+        def complete(self, messages):
+            raise error
+
+    with caplog.at_level("WARNING", logger="attribution_agent"):
+        AttributionAgent(FakeTools(), AgentConfig(), client=BrokenClient()).answer(
+            "看最新等级", {}
+        )
+
+    assert f"attribution agent model fallback: {category}" in caplog.text
+    assert "AI-SECRET-VALUE" not in caplog.text
+    assert "select" not in caplog.text.lower()
 
 
 def test_why_answer_separates_facts_inference_unknowns_and_next_steps():

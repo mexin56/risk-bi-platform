@@ -3,11 +3,15 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 import os
 import re
 from typing import Any
 
 import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -319,6 +323,26 @@ class AttributionAgent:
             {"role": "user", "content": json.dumps(safe_payload, ensure_ascii=False, default=str)},
         ]
 
+    @staticmethod
+    def _model_error_category(exc: Exception) -> str:
+        if isinstance(exc, (TimeoutError, requests.Timeout)):
+            return "timeout"
+        if isinstance(exc, requests.HTTPError):
+            return "http_error"
+        if isinstance(exc, (json.JSONDecodeError, requests.exceptions.JSONDecodeError)):
+            return "json_error"
+        if isinstance(exc, requests.RequestException):
+            return "request_error"
+        if isinstance(exc, RuntimeError):
+            if str(exc) == "AI client is not configured":
+                return "not_configured"
+            return "invalid_response"
+        return "client_error"
+
+    @staticmethod
+    def _warn_model_fallback(category: str) -> None:
+        logger.warning("attribution agent model fallback: %s", category)
+
     def answer(self, question: str, context: dict[str, str]) -> AgentAnswer:
         parsed = self.parser.parse(question)
         results, used_tools, pt = self._call_tools(parsed)
@@ -334,15 +358,19 @@ class AttributionAgent:
             next_steps = ["检查对应路径的近 60 天趋势及上游业务变更。"]
 
         conclusion = "AI 总结暂不可用；已返回结构化查询结果。"
-        if self.client is not None:
+        if self.client is None:
+            self._warn_model_fallback("not_configured")
+        else:
             current_time = context.get("current_time") or datetime.now(timezone.utc).isoformat()
             try:
                 candidate = self.client.complete(self._messages(question, current_time, results))
                 safe_candidate = self._safe_model_conclusion(candidate, results)
                 if safe_candidate:
                     conclusion = safe_candidate
-            except Exception:
-                pass
+                else:
+                    self._warn_model_fallback("unsafe_content")
+            except Exception as exc:
+                self._warn_model_fallback(self._model_error_category(exc))
 
         window = f"近{parsed['days']}天" if parsed["intent"] == "path_trend" else "当天"
         if parsed["intent"] in {"compare_partitions", "tracked_rule_followup"}:
