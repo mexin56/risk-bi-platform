@@ -128,6 +128,45 @@ def test_path_rows_include_zero_days_for_tracked_rules():
     assert by_day["2026-09-02"]["approval_count"] == 0
 
 
+def test_path_rows_start_at_tracking_entry_and_keep_later_zero_days():
+    day_before = pd.Timestamp("2026-08-31").date()
+    day_start = pd.Timestamp("2026-09-01").date()
+    day_after = pd.Timestamp("2026-09-02").date()
+
+    class FakeRunner:
+        config = {"approval_fields": ["approval"]}
+
+        def paths_exact_daily_batch(self, condition_sets):
+            return {
+                "rule-2": (
+                    pd.Series({day_before: 9.0, day_start: 2.0}),
+                    pd.Series({day_before: 3.0, day_start: 1.0}),
+                    pd.Series(dtype=float),
+                    pd.Series(dtype=float),
+                )
+            }
+
+        def trend_daily_totals(self):
+            return pd.Series({day_before: 10.0, day_start: 12.0, day_after: 14.0})
+
+    result = {
+        "merged_alerts": [{
+            "id": "rule-2",
+            "canonical_path": "field=b",
+            "tracking_start_pt": "20260901",
+            "conditions": [{"field": "field", "value": "b"}],
+        }],
+        "suppressed_alerts": [],
+    }
+
+    rows = build_path_rows(FakeRunner(), result)
+    by_day = {row["date"]: row for row in rows}
+
+    assert set(by_day) == {"2026-09-01", "2026-09-02"}
+    assert by_day["2026-09-01"]["application_count"] == 2.0
+    assert by_day["2026-09-02"]["application_count"] == 0
+
+
 def test_status_history_records_entry_exit_switch_and_reentry(tmp_path):
     store = AttributionStatusStore(tmp_path / "status.sqlite3")
     rule = {"canonical_path": "layer=a", "conditions": [{"field": "x"}]}

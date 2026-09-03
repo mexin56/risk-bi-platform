@@ -71,6 +71,7 @@ export interface AttributionRecord {
   status_updated_at: string | null;
   status_updated_by: string | null;
   action_date: string | null;
+  tracking_start_pt?: string | null;
   is_tracked_only?: boolean;
   enters_next_level: boolean;
   drilldown_rule: string;

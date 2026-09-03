@@ -171,6 +171,7 @@ class AttributionService:
         """Overlay manually managed rule states onto a fresh dashboard payload."""
         result = copy.deepcopy(payload)
         statuses = self._status_store.get_all()
+        active_tracking = self._status_store.get_active_tagged_rules()
         missing_rules: list[tuple[str, dict[str, Any]]] = []
 
         def visit(value: Any) -> None:
@@ -182,6 +183,8 @@ class AttributionService:
                     value["status_updated_at"] = status["updated_at"] if status else None
                     value["status_updated_by"] = status["updated_by"] if status else None
                     value["action_date"] = status.get("action_date") if status else None
+                    active = active_tracking.get(str(canonical_path))
+                    value["tracking_start_pt"] = active.get("entered_pt") if active else None
                     if status and int(status["status"]) in (1, 2) and not status.get("rule"):
                         missing_rules.append((str(canonical_path), value))
                 for child in value.values():
@@ -532,7 +535,16 @@ class AttributionService:
                 except (TypeError, ValueError):
                     pass
 
-        days = sorted(totals)[-int(limit):]
+        days = sorted(totals)
+        tracking_start_pt = record.get("tracking_start_pt")
+        if tracking_start_pt:
+            tracking_start_text = str(tracking_start_pt)
+            if re.fullmatch(r"\d{8}", tracking_start_text):
+                tracking_start_text = (
+                    f"{tracking_start_text[:4]}-{tracking_start_text[4:6]}-{tracking_start_text[6:]}"
+                )
+            days = [day for day in days if day >= tracking_start_text]
+        days = days[-int(limit):]
         if not days:
             return None
 
