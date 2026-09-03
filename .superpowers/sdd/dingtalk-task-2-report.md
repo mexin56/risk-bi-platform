@@ -126,3 +126,42 @@ git diff --check -- server/attribution_query_tools.py server/test_attribution_qu
 ```
 
 结果：退出码 0；仅有 Git 的 LF/CRLF 工作区转换提示，无空白错误。
+
+## 严格 days 类型校验修复（2026-09-03）
+
+修复提交：`6abd180 fix: strictly validate attribution trend days`
+
+修复内容：
+
+- `_normalized_days` 不再执行 `int(days)` 隐式转换。
+- 仅接受非布尔的 Python 整数 7、15、30、60。
+- `7.5`、`"7.5"`、`True` 等非整数输入均返回 `data=None`、统一 `error/warnings`，并且不调用任何 serving 方法。
+- 原有合法窗口和既有测试保持通过。
+
+测试命令及结果：
+
+```text
+python -m pytest server/test_attribution_query_tools.py -q
+.........................                                                [100%]
+25 passed in 0.11s
+```
+
+由于 Windows 默认 pytest 临时目录存在已记录的访问权限问题，使用工作区临时目录运行指定回归测试集：
+
+```text
+$env:PYTEST_ADDOPTS='--basetemp=.pytest_tmp_task2_strict_days'; python -m pytest server/test_path_trend_duckdb.py server/test_person_approval_rate.py -q
+....                                                                     [100%]
+4 passed in 2.07s
+```
+
+```text
+python -m py_compile server/attribution_query_tools.py server/test_attribution_query_tools.py
+```
+
+结果：退出码 0，无输出。
+
+```text
+git diff --check -- server/attribution_query_tools.py server/test_attribution_query_tools.py
+```
+
+结果：退出码 0；仅有 LF/CRLF 工作区转换提示，无空白错误。
