@@ -1,6 +1,6 @@
 from attribution_status import AttributionStatusStore
 from app import AttributionService
-from pipeline.cli import build_path_rows
+from pipeline.cli import _filter_series_from, build_path_rows
 import pandas as pd
 import pytest
 import sqlite3
@@ -198,6 +198,24 @@ def test_get_active_tagged_rules_uses_current_interval(tmp_path):
     assert active["field=switched"]["status"] == 2
     assert active["field=switched"]["entered_pt"] == "20260902"
     assert active["field=legacy"]["entered_pt"] == "20260901"
+
+
+def test_filter_series_from_entered_pt_excludes_prior_days():
+    series = pd.Series(
+        {
+            pd.Timestamp("2026-08-31").date(): 5.0,
+            pd.Timestamp("2026-09-01").date(): 7.0,
+            pd.Timestamp("2026-09-02").date(): 0.0,
+        }
+    )
+
+    filtered = _filter_series_from(series, "20260901")
+
+    assert list(filtered.index) == [
+        pd.Timestamp("2026-09-01").date(),
+        pd.Timestamp("2026-09-02").date(),
+    ]
+    assert filtered.tolist() == [7.0, 0.0]
 
 
 def test_repeating_same_status_keeps_original_entry_pt(tmp_path):

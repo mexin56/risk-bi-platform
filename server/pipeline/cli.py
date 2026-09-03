@@ -39,9 +39,25 @@ def _day_text(value: Any) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
+def _filter_series_from(series: pd.Series, start_pt: str | None) -> pd.Series:
+    """Keep daily values on or after a tagged rule's entry partition."""
+    if not start_pt:
+        return series.copy()
+    try:
+        start_day = pd.Timestamp(str(start_pt)).date()
+    except (TypeError, ValueError):
+        return series.copy()
+    filtered = series.copy()
+    if filtered.empty:
+        return filtered
+    filtered.index = pd.to_datetime(filtered.index).date
+    return filtered[filtered.index >= start_day].sort_index()
+
+
 def build_path_rows(
     runner: WarehouseAttributionRunner,
     result: dict[str, Any],
+    tracking_starts: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """全部预警路径(+免归因路径)的日序列与通过量,批量条件聚合扫完。
 
@@ -63,7 +79,23 @@ def build_path_rows(
     has_cid = bool(getattr(runner, "cid_count_field", "") and getattr(runner, "cid_approval_field", ""))
     rows: list[dict[str, Any]] = []
     for alert_id, (series, approval_series, cid_series, approval_cid_series) in series_map.items():
+        start_pt = (tracking_starts or {}).get(str(alert_id))
+        if start_pt is None:
+            start_pt = next(
+                (
+                    str(alert.get("tracking_start_pt"))
+                    for alert in alerts
+                    if str(alert.get("id")) == str(alert_id) and alert.get("tracking_start_pt")
+                ),
+                None,
+            )
+        try:
+            start_day = pd.Timestamp(start_pt).date() if start_pt else None
+        except (TypeError, ValueError):
+            start_day = None
         for day in all_days:
+            if start_day is not None and day < start_day:
+                continue
             count = series.get(day, 0.0)
             day_text = _day_text(day)
             approval = float(approval_series.get(day, 0.0)) if has_approval else None
@@ -158,11 +190,7 @@ def compute_and_publish(
 
     # 处于“已上策略/持续观察”的规则即使本次不再触发预警，也要继续进入
     # merged_alerts 和 path_daily，便于页面按状态复盘并保留每日 0 值。
-    tracked_rules = [
-        entry
-        for entry in service._status_store.get_all().values()
-        if int(entry.get("status", 0)) in (1, 2) and isinstance(entry.get("rule"), dict)
-    ]
+    tracked_rules = list(service._status_store.get_active_tagged_rules().values())
     if tracked_rules:
         condition_sets = [
             {"key": entry["canonical_path"], "conditions": entry["rule"].get("conditions", [])}
@@ -171,16 +199,29 @@ def compute_and_publish(
         tracked_series = runner.paths_exact_daily_batch(condition_sets)
         current_paths = {str(alert.get("canonical_path")) for alert in result.get("merged_alerts", [])}
         tracked_records: list[dict[str, Any]] = []
+        replaced_paths: dict[str, dict[str, Any]] = {}
         for entry in tracked_rules:
-            if entry["canonical_path"] in current_paths:
-                continue
             series = tracked_series.get(entry["canonical_path"])
             if series is None:
                 continue
-            tracked_record = runner.build_tracked_record(entry["rule"], series[0])
+            tracking_start_pt = str(entry.get("entered_pt") or pt)
+            filtered_series = tuple(
+                _filter_series_from(item, tracking_start_pt)
+                for item in series
+            )
+            tracked_record = runner.build_tracked_record(entry["rule"], filtered_series[0])
             if tracked_record is not None:
-                tracked_record["is_tracked_only"] = True
-                tracked_records.append(tracked_record)
+                tracked_record["tracking_start_pt"] = tracking_start_pt
+                if entry["canonical_path"] in current_paths:
+                    replaced_paths[entry["canonical_path"]] = tracked_record
+                else:
+                    tracked_record["is_tracked_only"] = True
+                    tracked_records.append(tracked_record)
+        if replaced_paths:
+            result["merged_alerts"] = [
+                replaced_paths.get(str(alert.get("canonical_path")), alert)
+                for alert in result.get("merged_alerts", [])
+            ]
         if tracked_records:
             result["merged_alerts"] = [*result.get("merged_alerts", []), *tracked_records]
             result["merged_alert_total"] = len(result["merged_alerts"])
