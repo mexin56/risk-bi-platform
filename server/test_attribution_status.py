@@ -147,6 +147,59 @@ def test_status_history_records_entry_exit_switch_and_reentry(tmp_path):
     assert history[2]["exited_pt"] == "20260901"
 
 
+def test_all_tagged_rules_includes_historical_records_and_current_legacy_rows(tmp_path):
+    store = AttributionStatusStore(tmp_path / "attribution_status.sqlite3")
+    historical_rule = {
+        "canonical_path": "field=historical",
+        "conditions": [{"field": "field", "value": "historical"}],
+    }
+    current_rule = {
+        "canonical_path": "field=current",
+        "conditions": [{"field": "field", "value": "current"}],
+    }
+
+    store.set_status("field=historical", 1, "alice", action_pt="20260831", rule=historical_rule)
+    store.set_status("field=historical", 0, "bob", action_pt="20260901")
+    store.set_status("field=current", 2, "carol", action_pt="20260902", rule=current_rule)
+
+    rules = store.get_all_tagged_rules()
+
+    assert set(rules) == {"field=historical", "field=current"}
+    assert rules["field=historical"] == historical_rule
+    assert rules["field=current"] == current_rule
+
+
+def test_get_active_tagged_rules_uses_current_interval(tmp_path):
+    db_path = tmp_path / "attribution_status.sqlite3"
+    store = AttributionStatusStore(db_path)
+    switched_rule = {
+        "canonical_path": "field=switched",
+        "conditions": [{"field": "field", "value": "switched"}],
+    }
+    legacy_rule = {
+        "canonical_path": "field=legacy",
+        "conditions": [{"field": "field", "value": "legacy"}],
+    }
+
+    store.set_status("field=switched", 1, "alice", action_pt="20260831", rule=switched_rule)
+    store.set_status("field=switched", 2, "bob", action_pt="20260902")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO attribution_rule_status
+                (canonical_path, status, updated_by, updated_at, action_date, rule_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ["field=legacy", 1, "carol", "2026-09-02T01:02:03+00:00", "20260901", json.dumps(legacy_rule)],
+        )
+
+    active = store.get_active_tagged_rules()
+
+    assert active["field=switched"]["status"] == 2
+    assert active["field=switched"]["entered_pt"] == "20260902"
+    assert active["field=legacy"]["entered_pt"] == "20260901"
+
+
 def test_repeating_same_status_keeps_original_entry_pt(tmp_path):
     store = AttributionStatusStore(tmp_path / "status.sqlite3")
     store.set_status("layer=b", 1, "alice", action_pt="20260831")

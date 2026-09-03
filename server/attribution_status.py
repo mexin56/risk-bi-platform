@@ -200,6 +200,59 @@ class AttributionStatusStore:
             for row in rows
         ]
 
+    def get_all_tagged_rules(self) -> dict[str, dict[str, Any]]:
+        """Return every rule that has ever entered status 1 or 2.
+
+        The current status table is intentionally kept as a compatibility
+        layer for rows created before the history table existed.  New rows
+        are sourced from the history table so a later status=0 does not make
+        the rule disappear from daily statistics.
+        """
+        rules: dict[str, dict[str, Any]] = {}
+        for entry in self.get_all().values():
+            if int(entry.get("status", 0)) not in (1, 2):
+                continue
+            rule = entry.get("rule")
+            if isinstance(rule, dict):
+                rules[str(entry["canonical_path"])] = rule
+        for entry in self.get_history():
+            rule = entry.get("rule")
+            if not isinstance(rule, dict):
+                continue
+            rules.setdefault(str(entry["canonical_path"]), rule)
+        return rules
+
+    def get_active_tagged_rules(self) -> dict[str, dict[str, Any]]:
+        """Return currently active tagged rules and their interval start pt."""
+        current_statuses = self.get_all()
+        active_history: dict[str, dict[str, Any]] = {}
+        for entry in self.get_history():
+            if not entry.get("is_active"):
+                continue
+            canonical_path = str(entry["canonical_path"])
+            previous = active_history.get(canonical_path)
+            if previous is None or (str(entry["entered_at"]), int(entry["id"])) > (
+                str(previous["entered_at"]), int(previous["id"])
+            ):
+                active_history[canonical_path] = entry
+
+        active: dict[str, dict[str, Any]] = {}
+        for canonical_path, entry in current_statuses.items():
+            if int(entry.get("status", 0)) not in (1, 2) or not isinstance(entry.get("rule"), dict):
+                continue
+            history = active_history.get(canonical_path)
+            active[canonical_path] = {
+                "canonical_path": canonical_path,
+                "status": int(entry["status"]),
+                "rule": entry["rule"],
+                "entered_pt": (
+                    history.get("entered_pt")
+                    if history is not None
+                    else entry.get("action_date")
+                ),
+            }
+        return active
+
     def save_rule_if_missing(self, canonical_path: str, rule: dict[str, Any]) -> None:
         rule_json = json.dumps(rule, ensure_ascii=False, default=str)
         with self._connect() as connection:
