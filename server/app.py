@@ -24,10 +24,11 @@ from typing import Any
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
+from attribution_notification import DEFAULT_REPORT_DIR, report_path_is_safe
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -819,6 +820,7 @@ class AttributionService:
 load_local_env()
 CACHE_SECONDS = int(os.getenv("ATTRIBUTION_CACHE_SECONDS", "900"))
 service = AttributionService()
+NOTIFICATION_REPORT_DIR = DEFAULT_REPORT_DIR
 app = FastAPI(title="Risk BI · Credit Attribution API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -828,6 +830,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+
+
+@app.get("/api/credit-attribution/notification-reports/{filename}")
+def notification_report(filename: str) -> FileResponse:
+    try:
+        path = report_path_is_safe(NOTIFICATION_REPORT_DIR, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="报告不存在") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return FileResponse(path, media_type="image/png", filename=path.name)
 
 
 class RuleStatusUpdate(BaseModel):
