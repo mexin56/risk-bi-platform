@@ -353,7 +353,9 @@ function SelectedPathAnalysis({
                   <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率（件数）</div><div className="mt-0.5 text-[17px] font-semibold text-violet-700 tabular-nums">{latestPoint?.approval_rate_pct == null ? '—' : `${latestPoint.approval_rate_pct.toFixed(2)}%`}</div></div>
                   <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-2.5 py-2"><div className="text-[10px] text-slate-400">最新通过率（人数）</div><div className="mt-0.5 text-[17px] font-semibold text-emerald-700 tabular-nums">{latestPoint?.cid_approval_rate_pct == null ? '—' : `${latestPoint.cid_approval_rate_pct.toFixed(2)}%`}</div></div>
                 </div>
-                <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
+                <div data-testid="credit-attribution-trend-chart">
+                  <ReactECharts option={trendOption} style={{ height: 280 }} notMerge />
+                </div>
                 <div className="-mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 px-3.5 pb-3 text-[10px] text-slate-400">
                   <span><i className="mr-1 inline-block h-2 w-2 rounded-sm" style={{ background: trendBrand }} />路径申请量</span>
                   <span><i className="mr-1 inline-block h-0.5 w-3 align-middle" style={{ background: trendAccent }} />通过率（件数）</span>
@@ -655,9 +657,10 @@ export default function CreditAttribution() {
     return {
       0: allRows.filter((record) => !record.is_tracked_only).length,
       1: allRows.filter((record) => (record.status ?? 0) === 1).length,
-      2: allRows.filter((record) => (record.status ?? 0) === 2).length,
+      2: dashboard?.summary.tracked_rule_count
+        ?? allRows.filter((record) => (record.status ?? 0) === 2).length,
     } satisfies Record<RuleStatus, number>;
-  }, [allRows]);
+  }, [allRows, dashboard?.summary.tracked_rule_count]);
 
   const anomalyTypes = useMemo(() => {
     return Array.from(new Set(allRows.map((record) => record.anomaly_type))).sort();
@@ -896,7 +899,7 @@ export default function CreditAttribution() {
     { key: 'source', title: '来源', width: 118, render: (record) => <SourceTag source={record.source} /> },
     {
       key: 'path', title: '异常归因路径', width: 360,
-      render: (record) => record.level === 0 ? (
+      render: (record) => record.level === 0 && !record.is_tracked_only ? (
         <PathHoverTip path={record.path}>
           <span
             className="max-w-[340px] cursor-pointer truncate text-slate-500 hover:text-slate-700"
@@ -908,7 +911,7 @@ export default function CreditAttribution() {
           <button
             onClick={() => selectAlertPath(record)}
             className="max-w-[340px] cursor-pointer truncate text-left font-medium text-slate-700 underline-offset-2 hover:text-blue-600 hover:underline"
-            title="悬停查看完整值; 点击查看该路径近15天趋势"
+            title="悬停查看完整值; 点击查看该路径近60天趋势"
           >
             {record.path}
           </button>
@@ -959,7 +962,7 @@ export default function CreditAttribution() {
   const { meta, rules } = dashboard;
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-4 pb-2" ref={contentRef}>
+    <div className="mx-auto max-w-[1440px] space-y-4 pb-2" data-testid="credit-attribution-content" ref={contentRef}>
       {/* 工具条: 观察区间 / 分区 / 刷新 */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">
@@ -1053,7 +1056,7 @@ export default function CreditAttribution() {
 
       <ChartCard
         title="合并预警结果"
-        subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；鼠标悬停路径放大显示完整值, 点击查看该路径近15天趋势`}
+        subtitle={`Top-K 单维/二级下钻名单与专家规则全部展示(含无预警候选)；鼠标悬停路径放大显示完整值, 点击查看该路径近60天趋势`}
         accent="#f97316"
       >
         <div role="tablist" aria-label="规则处理状态" className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3">

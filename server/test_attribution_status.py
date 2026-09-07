@@ -128,7 +128,7 @@ def test_path_rows_include_zero_days_for_tracked_rules():
     assert by_day["2026-09-02"]["approval_count"] == 0
 
 
-def test_path_rows_start_at_tracking_entry_and_keep_later_zero_days():
+def test_path_rows_keep_full_lookback_and_later_zero_days_for_tracked_rule():
     day_before = pd.Timestamp("2026-08-31").date()
     day_start = pd.Timestamp("2026-09-01").date()
     day_after = pd.Timestamp("2026-09-02").date()
@@ -162,7 +162,8 @@ def test_path_rows_start_at_tracking_entry_and_keep_later_zero_days():
     rows = build_path_rows(FakeRunner(), result)
     by_day = {row["date"]: row for row in rows}
 
-    assert set(by_day) == {"2026-09-01", "2026-09-02"}
+    assert set(by_day) == {"2026-08-31", "2026-09-01", "2026-09-02"}
+    assert by_day["2026-08-31"]["application_count"] == 9.0
     assert by_day["2026-09-01"]["application_count"] == 2.0
     assert by_day["2026-09-02"]["application_count"] == 0
 
@@ -256,8 +257,9 @@ def test_compute_and_publish_rebuilds_hit_and_non_hit_tracked_rules_from_entry_p
     assert stats["run_id"] == "run-1"
     assert captured["result"]["merged_alerts"][0]["tracking_start_pt"] == "20260901"
     assert captured["result"]["merged_alerts"][0].get("is_tracked_only") is (None if currently_hit else True)
+    assert captured["result"]["summary"]["tracked_rule_count"] == 1
     assert list(captured["path_rows"][0].keys())
-    assert {row["date"] for row in captured["path_rows"]} == {"2026-09-01", "2026-09-02"}
+    assert {row["date"] for row in captured["path_rows"]} == {"2026-08-31", "2026-09-01", "2026-09-02"}
 
 
 def test_status_history_records_entry_exit_switch_and_reentry(tmp_path):

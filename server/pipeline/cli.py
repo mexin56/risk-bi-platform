@@ -79,23 +79,7 @@ def build_path_rows(
     has_cid = bool(getattr(runner, "cid_count_field", "") and getattr(runner, "cid_approval_field", ""))
     rows: list[dict[str, Any]] = []
     for alert_id, (series, approval_series, cid_series, approval_cid_series) in series_map.items():
-        start_pt = (tracking_starts or {}).get(str(alert_id))
-        if start_pt is None:
-            start_pt = next(
-                (
-                    str(alert.get("tracking_start_pt"))
-                    for alert in alerts
-                    if str(alert.get("id")) == str(alert_id) and alert.get("tracking_start_pt")
-                ),
-                None,
-            )
-        try:
-            start_day = pd.Timestamp(start_pt).date() if start_pt else None
-        except (TypeError, ValueError):
-            start_day = None
         for day in all_days:
-            if start_day is not None and day < start_day:
-                continue
             count = series.get(day, 0.0)
             day_text = _day_text(day)
             approval = float(approval_series.get(day, 0.0)) if has_approval else None
@@ -225,6 +209,10 @@ def compute_and_publish(
         if tracked_records:
             result["merged_alerts"] = [*result.get("merged_alerts", []), *tracked_records]
             result["merged_alert_total"] = len(result["merged_alerts"])
+
+    result.setdefault("summary", {})["tracked_rule_count"] = sum(
+        1 for entry in tracked_rules if int(entry.get("status", 0)) == 2
+    )
 
     path_rows_started = time.time()
     path_rows = build_path_rows(runner, result)

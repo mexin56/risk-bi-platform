@@ -170,6 +170,7 @@ export interface AttributionDashboard {
     approval_cid_cnt: number;
     approval_jy0_count: number;
     merged_alert_count: number;
+    tracked_rule_count: number;
     level3_count: number;
     level2_count: number;
     level1_count: number;
