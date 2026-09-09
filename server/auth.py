@@ -36,6 +36,7 @@ PERMISSION_CATALOG = [
     {"key": "lifecycle", "label": "客户生命周期"},
     {"key": "creditStrategy", "label": "提额策略监控"},
     {"key": "attribution", "label": "授信归因监控"},
+    {"key": "fundMonitor", "label": "资金归结监控"},
     {"key": "channel", "label": "渠道质量"},
     {"key": "fraud", "label": "反欺诈监控"},
     {"key": "vintage", "label": "Vintage 监控"},
@@ -135,6 +136,7 @@ def _seed(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO roles (key, name, permissions, builtin) VALUES (?, ?, ?, ?)",
             (key, name, json.dumps(permissions), int(builtin)),
         )
+    _grant_new_permissions(conn)
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
         for username, display_name, role_key, env_name, default_password in DEFAULT_USERS:
@@ -145,6 +147,30 @@ def _seed(conn: sqlite3.Connection) -> None:
                 (username, display_name, hash_password(password), role_key, _now()),
             )
     conn.commit()
+
+
+def _grant_new_permissions(conn: sqlite3.Connection) -> None:
+    """新增页面权限时自动授予 admin/analyst 内置角色（对既有库平滑升级）。
+
+    只补充"当前任何角色都没有的权限 key"（即新目录项），不会恢复被管理员
+    主动移除的权限。
+    """
+    known: set[str] = set()
+    for row in conn.execute("SELECT permissions FROM roles").fetchall():
+        try:
+            known.update(json.loads(row["permissions"] or "[]"))
+        except (ValueError, TypeError):
+            continue
+    fresh = [key for key in ALL_PERMISSIONS if key not in known]
+    if not fresh:
+        return
+    for role_key in ("admin", "analyst"):
+        row = conn.execute("SELECT permissions FROM roles WHERE key = ?", [role_key]).fetchone()
+        if row is None:
+            continue
+        permissions = json.loads(row["permissions"] or "[]")
+        merged = list(dict.fromkeys([*permissions, *fresh]))
+        conn.execute("UPDATE roles SET permissions = ? WHERE key = ?", [json.dumps(merged), role_key])
 
 
 def create_session(username: str) -> str:

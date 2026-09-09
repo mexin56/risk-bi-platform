@@ -3,7 +3,7 @@
 风控 BI 监控项目，包含：
 
 - **提额策略执行分析**：按《提额系数》逐行统计提额/未提额客户、额度变化、T0/下一笔发起及 FPD 指标，并测算整体户均额度目标达成。
-- **授信归因监控**：MaxCompute 聚合数据上的 Top-K 自动归因与专家规则归因；点击预警路径可加载该路径近 15 天趋势。
+- **归因监控**：授信归因与资金归结统一在同一页面，通过 tab 切换；点击预警路径可加载对应路径趋势。
 - 其他风控监控页面：生命周期、渠道质量、反欺诈、Vintage、模型分与模型稳定性。
 
 ## 开发启动
@@ -38,6 +38,46 @@ python -m pipeline.cli status                     # 查看运行批次与快照
 - dashboard 冷响应 ~114s → <0.5s；path-trend 点击 ~7s → <100ms。
 - `force=true` 语义：立即返回旧数据 + 后台子进程重算并重新发布（`meta.async_refresh=true`）。
 - 设计与验收详见 `design/attribution-precompute-duckdb-dagster-plan.md`（P2 将接入 Dagster 调度）。
+
+## 资金归结监控（贷前 · 中介团伙异常订单归因 v1.2）
+
+资金归结已与授信归因统一到「归因监控」页面，通过顶层 tab 切换；资金计算、结果存储与授信独立，页面骨架沿用授信归因模块：观察区间/分区工具条、规则状态 tab、飞书表格、选中路径趋势和运行口径卡片。
+
+- **数据源**：MaxCompute 明细表 `pb_biz_credit.lj_cap_flow_analysis_base`（pt 分区，businessid 每行唯一，
+  `payee_last1_cnt_cate` 0/1 异常标记），按 `create_date` + 9 个归因维度在 MaxCompute 侧聚合，
+  只把结果切片传回进程内（与 `warehouse.py` 同款 per-field GROUP BY + Top-K 候选条件聚合批量精确序列）。
+- **方案 v1.2 口径**：近 1/3/7 天为观察期，观察期以外**全部历史日期**为该窗口基准期（不截断）；
+  双序列（异常订单数 + 总订单数）；核心指标 = 异常订单量增长倍数 / 异常率提升倍数 / 两样本比例 z-score；
+  Level1 黄（≥5/×1.5/×1.5/z≥2）、Level2 橙（≥10/×2/×2/z≥3）、Level3 红（≥20/×3/×3/z≥5）；
+  基准异常=0 走「新增异常」口径，基准总订单=0 标记「无基准，人工复核」。
+- **Top-K**：单维全量 → 内部 Top10 → 二级 → 内部 Top5 → 三级终止；候选门槛：任一窗口观察异常订单 ≥5。
+- **专家规则**：强制单维（当前：loan_cust_lifecycle_stage in (-1, 新客当月, 新客次月)）/ 双维 / 三维，
+  绕过剪枝但不改变指标与阈值；合并去重后双链标记「Top-K + 专家规则」。
+- **服务语义与授信归因一致**（`fund_service.py` 镜像 `app.AttributionService`）：
+  分区发现 / 观察区间回看（offset）/ 内存+磁盘缓存（`server/data/fund_attribution_cache/`）/
+  force=true 立即返回旧数据 + 后台异步重算（前端 15s 轮询）/ 路径趋势（记录内嵌每日序列）/ 规则状态标记
+  （`server/data/fund_attribution_status.sqlite3`，与授信归因同一套 AttributionStatusStore）。
+- **预计算存储**：`server/fund_pipeline/cli.py` 将结果写入独立 `server/data/fund_attribution.duckdb`，并发布到只读
+  `server/data/fund_serving/*.parquet`；API 优先读取资金 serving 快照，缺失时再走缓存/在线计算。
+  ```powershell
+  cd server
+  python -m fund_pipeline.cli run --pt 20260903
+  python -m fund_pipeline.cli status
+  ```
+- **API**：`/api/fund-attribution/{health,partitions,dashboard,path-trend,rule-status,rule-status-history}`，
+  权限 key：`fundMonitor`。
+- **前端**：`src/pages/AttributionMonitor.tsx` 统一承载 tab；资金实现为 `src/pages/FundAttribution.tsx`，
+  `src/pages/FundMonitor.tsx` 仅保留旧入口兼容导出。
+- **配置**：`server/config/fund_monitor_config.json`（表名、维度、阈值、Top-K、专家规则可配，
+  可用 `FUND_MONITOR_TABLE` 环境变量覆盖表名）。
+- **测试与核验**：`server/test_fund_attribution.py`（离线验证完整编排与 v1.2 口径）+
+  `server/test_fund_service_api.py`（API 缓存/路径趋势/规则状态/鉴权）+
+  `server/test_fund_pipeline.py`（独立 DuckDB/serving 发布）+
+  `server/verify_fund_sample.py`（对比 Excel 的窗口总览、日趋势、专家强制路径和正式预警状态）。
+  ```powershell
+  python server/verify_fund_sample.py --result result.json --expected "中介团伙异常订单归因_20260905样本_v1.2_全历史基准期运行结果.xlsx"
+  ```
+- **实测**：pt=20260903（450 万订单 / 60 天 / 4,629 异常）首次全量计算约 228s，之后缓存秒开。
 
 ## 登录与权限管理
 

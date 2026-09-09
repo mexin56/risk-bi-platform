@@ -27,7 +27,7 @@ import Vintage from '@/pages/Vintage';
 import ModelScore from '@/pages/ModelScore';
 import Stability from '@/pages/Stability';
 import CreditStrategy from '@/pages/CreditStrategy';
-import CreditAttribution from '@/pages/CreditAttribution';
+import AttributionMonitor from '@/pages/AttributionMonitor';
 import UsersPage from '@/pages/Users';
 import Login from '@/pages/Login';
 import ThemeSettings from '@/components/ThemeSettings';
@@ -40,14 +40,15 @@ import {
   logout as apiLogout,
   type AuthSession,
 } from '@/lib/auth';
+import { normalizePageParam } from '@/lib/attributionTab';
 
-type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability' | 'users';
+type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'fundMonitor' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability' | 'users';
 
 const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] = [
   { key: 'overview', label: '大盘数据', icon: Gauge, desc: '经营全景与资产质量' },
   { key: 'lifecycle', label: '客户生命周期', icon: Users, desc: '贷前·授信·交易·复贷·催收' },
   { key: 'creditStrategy', label: '提额策略监控', icon: CircleDollarSign, desc: '系数核验 · 额度目标 · 提额归因' },
-  { key: 'attribution', label: '授信归因监控', icon: Target, desc: '异常归因 · Top-K · 专家归因' },
+  { key: 'attribution', label: '归因监控', icon: Target, desc: '授信 / 资金 · Tab 切换' },
   { key: 'channel', label: '渠道质量', icon: Network, desc: '助贷渠道 · 通过率×风险×成本' },
   { key: 'fraud', label: '反欺诈监控', icon: ShieldAlert, desc: '规则命中 · 设备聚集 · 团伙预警' },
   { key: 'vintage', label: 'Vintage 监控', icon: Layers, desc: '账龄结构与 Cohort 表现' },
@@ -78,7 +79,7 @@ function LiveClock() {
 export default function App() {
   // 分享链接支持: 初始页面从 ?page= 恢复(无参数或非法值回落大盘)
   const [page, setPageState] = useState<PageKey>(() => {
-    const value = new URLSearchParams(window.location.search).get('page');
+    const value = normalizePageParam(new URLSearchParams(window.location.search).get('page'));
     return NAV.some((n) => n.key === value) ? (value as PageKey) : 'overview';
   });
   const [collapsed, setCollapsed] = useState(false);
@@ -126,8 +127,14 @@ export default function App() {
   // 账号权限变化后，若当前页不可见则回到第一个可见页
   useEffect(() => {
     if (!session) return;
-    const allowed = NAV.filter((n) =>
-      n.key === 'users' ? hasPermission(session.user, 'users') : hasPermission(session.user, n.key),
+    const allowed = NAV.filter(
+      (n) =>
+        n.key !== 'fundMonitor' &&
+        (n.key === 'attribution'
+          ? hasPermission(session.user, 'attribution') || hasPermission(session.user, 'fundMonitor')
+          : n.key === 'users'
+            ? hasPermission(session.user, 'users')
+            : hasPermission(session.user, n.key)),
     );
     if (allowed.length && !allowed.some((n) => n.key === page)) setPage(allowed[0].key);
   }, [session, page]);
@@ -192,7 +199,14 @@ export default function App() {
   }
 
   const visibleNav = session
-    ? NAV.filter((n) => (n.key === 'users' ? hasPermission(session.user, 'users') : hasPermission(session.user, n.key)))
+    ? NAV.filter((n) =>
+        n.key !== 'fundMonitor' &&
+        (n.key === 'attribution'
+          ? hasPermission(session.user, 'attribution') || hasPermission(session.user, 'fundMonitor')
+          : n.key === 'users'
+            ? hasPermission(session.user, 'users')
+            : hasPermission(session.user, n.key)),
+      )
     : [];
 
   return (
@@ -461,7 +475,7 @@ export default function App() {
               {page === 'overview' && <Overview />}
               {page === 'lifecycle' && <Lifecycle stage={stage} />}
               {page === 'creditStrategy' && <CreditStrategy />}
-              {page === 'attribution' && <CreditAttribution />}
+              {page === 'attribution' && session && <AttributionMonitor user={session.user} />}
               {page === 'channel' && <Channel />}
               {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}

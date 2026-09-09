@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
 from attribution_notification import DEFAULT_REPORT_DIR, report_path_is_safe
+from fund_service import router as fund_router
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -411,7 +412,12 @@ class AttributionService:
             # 管线可能在 API 进程外发布了新快照: 不能让 15 分钟内存缓存遮住新数据
             if serving_assemble is not None:
                 snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
-                if snapshot is not None and self._generated_at(snapshot) > self._generated_at(cached[1]):
+                cached_serving = bool((cached[1].get("meta") or {}).get("serving"))
+                snapshot_serving = bool((snapshot or {}).get("meta", {}).get("serving"))
+                if snapshot is not None and (
+                    self._generated_at(snapshot) > self._generated_at(cached[1])
+                    or (snapshot_serving and not cached_serving)
+                ):
                     result = copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
                     result["meta"]["cache_hit"] = True
                     return result
@@ -479,7 +485,9 @@ class AttributionService:
             self._cache[cache_key] = (time.time(), result)
             self._save_disk_cache(cache_key, result)
             # 兜底写回:子进程把结果发布进 DuckDB + 快照(下次就是秒读)
-            self._spawn_ingest(selected, offset, result)
+            if serving_assemble is not None:
+                result["meta"]["async_refresh"] = True
+                self._spawn_ingest(selected, offset, result)
             return copy.deepcopy(result)
 
     @staticmethod
@@ -536,16 +544,10 @@ class AttributionService:
                 except (TypeError, ValueError):
                     pass
 
-        days = sorted(totals)
-        tracking_start_pt = record.get("tracking_start_pt")
-        if tracking_start_pt:
-            tracking_start_text = str(tracking_start_pt)
-            if re.fullmatch(r"\d{8}", tracking_start_text):
-                tracking_start_text = (
-                    f"{tracking_start_text[:4]}-{tracking_start_text[4:6]}-{tracking_start_text[6:]}"
-                )
-            days = [day for day in days if day >= tracking_start_text]
-        days = days[-int(limit):]
+        # Trend charts always use the same full lookback as discovery rules.
+        # tracking_start_pt remains metadata for tagged-rule follow-up, but it
+        # must not shorten the visual trend window.
+        days = sorted(totals)[-int(limit):]
         if not days:
             return None
 
@@ -830,6 +832,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(fund_router)
 
 
 @app.get("/api/credit-attribution/notification-reports/{filename}")

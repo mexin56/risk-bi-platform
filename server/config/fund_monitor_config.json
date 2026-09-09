@@ -1,0 +1,97 @@
+{
+  "version": "v1.2",
+  "scheme_name": "中介团伙异常订单异常升高归因监控（贷前资金归结）",
+  "description": "识别“取现后快速转账至集中收款账户”相关中介团伙欺诈的异常订单聚集路径；观察期固定为近1/3/7天，观察期以外的全部历史日期作为该窗口基准期。",
+  "table": "pb_biz_credit.lj_cap_flow_analysis_base",
+  "date_field": "create_date",
+  "abnormal_field": "payee_last1_cnt_cate",
+  "count_mode": "row_count",
+  "dimensions": [
+    "ser_call_node",
+    "cus_flag",
+    "cashloan_cid_mob_type",
+    "loan_cust_lifecycle_stage",
+    "traffic_channel",
+    "reg_sx_days",
+    "sx_order_days",
+    "register_software",
+    "state_name_clean"
+  ],
+  "field_labels": {
+    "ser_call_node": "业务/产品调用节点",
+    "cus_flag": "客户业务标签",
+    "cashloan_cid_mob_type": "现金贷客户类型/标签",
+    "loan_cust_lifecycle_stage": "客户生命周期",
+    "traffic_channel": "流量/业务入口渠道",
+    "reg_sx_days": "注册至授信申请间隔",
+    "sx_order_days": "授信至订单间隔",
+    "register_software": "注册软件/客户端来源",
+    "state_name_clean": "州/地区"
+  },
+  "windows": [
+    {
+      "key": "1d",
+      "label": "近1天",
+      "observation_days": 1,
+      "purpose": "识别单日尖峰",
+      "color": "#5B9BD5"
+    },
+    {
+      "key": "3d",
+      "label": "近3天",
+      "observation_days": 3,
+      "purpose": "识别短期放量",
+      "color": "#ED7D31"
+    },
+    {
+      "key": "7d",
+      "label": "近7天",
+      "observation_days": 7,
+      "purpose": "识别趋势抬升",
+      "color": "#70AD47"
+    }
+  ],
+  "thresholds": [
+    {
+      "level": 1,
+      "label": "Level1 黄色",
+      "min_observation_count": 5,
+      "min_growth_factor": 1.5,
+      "min_rate_lift_factor": 1.5,
+      "min_z_score": 2
+    },
+    {
+      "level": 2,
+      "label": "Level2 橙色",
+      "min_observation_count": 10,
+      "min_growth_factor": 2,
+      "min_rate_lift_factor": 2,
+      "min_z_score": 3
+    },
+    {
+      "level": 3,
+      "label": "Level3 红色",
+      "min_observation_count": 20,
+      "min_growth_factor": 3,
+      "min_rate_lift_factor": 3,
+      "min_z_score": 5
+    }
+  ],
+  "candidate_min_observation_count": 5,
+  "top_k": {
+    "single_limit": 10,
+    "pair_limit": 5
+  },
+  "suppression_rules": [],
+  "expert_forced_single": [
+    {
+      "field": "loan_cust_lifecycle_stage",
+      "values": ["-1", "新客当月", "新客次月"],
+      "label": "强制单维：loan_cust_lifecycle_stage in (-1, 新客当月, 新客次月)"
+    }
+  ],
+  "expert_forced_pair": [],
+  "expert_forced_third": [],
+  "baseline_short_days": 14,
+  "small_sample_observation_total": 30
+}

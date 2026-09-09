@@ -155,6 +155,7 @@ export interface AttributionDashboard {
     note: string;
     cache_hit: boolean;
     async_refresh?: boolean;
+    serving?: boolean;
     table_date_min?: string | null;
     table_date_max?: string | null;
   };

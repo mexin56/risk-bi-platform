@@ -32,6 +32,7 @@ export const PAGE_PERMISSIONS: PermissionInfo[] = [
   { key: 'lifecycle', label: '客户生命周期' },
   { key: 'creditStrategy', label: '提额策略监控' },
   { key: 'attribution', label: '授信归因监控' },
+  { key: 'fundMonitor', label: '资金归结监控' },
   { key: 'channel', label: '渠道质量' },
   { key: 'fraud', label: '反欺诈监控' },
   { key: 'vintage', label: 'Vintage 监控' },

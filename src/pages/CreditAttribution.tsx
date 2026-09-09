@@ -19,6 +19,7 @@ import ChartCard from '@/components/ChartCard';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { baseOption } from '@/lib/chartTheme';
+import { isAttributionRefreshReady } from '@/lib/attributionRefresh';
 import { getTheme } from '@/lib/theme';
 import {
   fetchAttributionPartitions,
@@ -473,7 +474,7 @@ export default function CreditAttribution() {
               await new Promise((resolve) => setTimeout(resolve, 15000));
               if (!isCurrentRequest()) return;
               const fresh = await fetchCreditAttribution(pt, false, offset);
-              if (fresh.meta.generated_at !== baseline) {
+              if (isAttributionRefreshReady(fresh.meta.generated_at, baseline, fresh.meta)) {
                 apply(fresh);
                 reloadPartitions(true); // 重算可能包含新发现分区, 同步更新下拉选项
                 break;

@@ -7,7 +7,9 @@
     "approval_cnt",
     "approval_jy0_cnt"
   ],
-  "lookback_days": 60,
+  "cid_count_field": "cid_cnt",
+  "cid_approval_field": "approval_cid_cnt",
+  "lookback_days": 15,
   "trend_days": 60,
   "dimensions": [
     "traffic_channel",
