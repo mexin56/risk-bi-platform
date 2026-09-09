@@ -5,6 +5,7 @@ import {
   normalizePageParam,
   defaultAttributionTab,
   buildAttributionUrl,
+  visibleAttributionTabs,
 } from '../src/lib/attributionTab.ts';
 
 test('normalizes fund tab and invalid values', () => {
@@ -22,6 +23,13 @@ test('chooses a tab only when the user has permission', () => {
   assert.equal(defaultAttributionTab(true, true), 'credit');
   assert.equal(defaultAttributionTab(false, true), 'fund');
   assert.equal(defaultAttributionTab(false, false), null);
+});
+
+test('exposes only tabs granted to the current user', () => {
+  assert.deepEqual(visibleAttributionTabs(true, true), ['credit', 'fund']);
+  assert.deepEqual(visibleAttributionTabs(true, false), ['credit']);
+  assert.deepEqual(visibleAttributionTabs(false, true), ['fund']);
+  assert.deepEqual(visibleAttributionTabs(false, false), []);
 });
 
 test('writes tab without changing unrelated query parameters', () => {

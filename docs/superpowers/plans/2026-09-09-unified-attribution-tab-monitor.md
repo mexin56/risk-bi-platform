@@ -103,7 +103,7 @@ test('writes tab without changing unrelated query parameters', () => {
 
 - [ ] **Step 2: Run the focused test and verify it fails**.
 
-Run: `node --test tests/attributionTab.test.mjs`
+Run: `node --experimental-transform-types --test tests/attributionTab.test.mjs`
 
 Expected: FAIL because `src/lib/attributionTab.ts` does not exist.
 
@@ -111,7 +111,7 @@ Expected: FAIL because `src/lib/attributionTab.ts` does not exist.
 
 - [ ] **Step 4: Run the focused test and verify it passes**.
 
-Run: `node --test tests/attributionTab.test.mjs`
+Run: `node --experimental-transform-types --test tests/attributionTab.test.mjs`
 
 Expected: 4 passing tests and 0 failures.
 
@@ -130,10 +130,10 @@ git commit -m "feat: define unified attribution tab routing"
 
 **Interfaces:**
 
-`AttributionMonitor` receives no props. It reads the current URL and authenticated user, renders only tabs for which the user has permission, and renders exactly one child page:
+`AttributionMonitor` receives the already authenticated `AuthUser` from `App`, reads the current URL, renders only tabs for which the user has permission, and renders exactly one child page:
 
 ```tsx
-<AttributionMonitor />
+<AttributionMonitor user={session.user} />
 // child: <CreditAttribution /> or <FundAttribution />
 ```
 
@@ -141,7 +141,7 @@ git commit -m "feat: define unified attribution tab routing"
 
 - [ ] **Step 2: Run the focused test and verify it fails** with the current URL helper behavior.
 
-Run: `node --test tests/attributionTab.test.mjs`
+Run: `node --experimental-transform-types --test tests/attributionTab.test.mjs`
 
 Expected: FAIL on the new unified-page assertion.
 

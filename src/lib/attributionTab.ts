@@ -15,6 +15,13 @@ export function defaultAttributionTab(canCredit: boolean, canFund: boolean): Att
   return null;
 }
 
+export function visibleAttributionTabs(canCredit: boolean, canFund: boolean): AttributionTab[] {
+  return [
+    ...(canCredit ? (['credit'] as const) : []),
+    ...(canFund ? (['fund'] as const) : []),
+  ];
+}
+
 export function buildAttributionUrl(currentUrl: string, tab: AttributionTab): string {
   const url = new URL(currentUrl);
   url.searchParams.set('page', 'attribution');
