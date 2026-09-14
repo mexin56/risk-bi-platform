@@ -30,6 +30,7 @@ from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
 from attribution_notification import DEFAULT_REPORT_DIR, report_path_is_safe
 from fund_service import router as fund_router
+from model_monitoring import CASH_SER_CALL_NODE_OPTIONS, MODEL_SCORES, build_monitoring_payload
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -159,12 +160,36 @@ def json_safe(value: Any) -> Any:
     return value
 
 
+def _sql_string_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _model_monitoring_label_filters(
+    flag_mob_type: str | None,
+    flag_product: str | None,
+    cash_ser_call_node: str | None = None,
+) -> str:
+    clauses: list[str] = []
+    for field, value in (
+        ("flag_mob_type", flag_mob_type),
+        ("flag_product", flag_product),
+        ("cash_ser_call_node", cash_ser_call_node),
+    ):
+        normalized = (value or "").strip()
+        if normalized:
+            expression = f"COALESCE(CAST({field} AS STRING), '未知')"
+            clauses.append(f"AND {expression} = {_sql_string_literal(normalized)}")
+    return "\n                      " + "\n                      ".join(clauses) if clauses else ""
+
+
 class AttributionService:
     def __init__(self) -> None:
         self.config = load_config()
         self._status_store = AttributionStatusStore(STATUS_DB_PATH)
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._path_trend_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._model_monitor_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._model_monitor_label_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
         self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
@@ -321,6 +346,292 @@ class AttributionService:
                         row[name] = record[index]
                 rows.append(row)
         return rows
+
+    @property
+    def model_monitoring_table_name(self) -> str:
+        table = os.getenv(
+            "MAXCOMPUTE_MODEL_MONITORING_TABLE",
+            "pb_biz_credit.ng_cash_model_monitoring_df",
+        ).strip()
+        if not SAFE_IDENTIFIER.fullmatch(table):
+            raise AttributionServiceError("MAXCOMPUTE_MODEL_MONITORING_TABLE 格式不合法。")
+        return table
+
+    def model_monitoring_partitions(self) -> list[str]:
+        table = self._odps().get_table(self.model_monitoring_table_name.split(".")[-1])
+        partitions: list[str] = []
+        for item in table.partitions:
+            match = re.search(r"pt='([^']+)'", str(item))
+            if match:
+                partitions.append(match.group(1))
+        return sorted(set(partitions), reverse=True)
+
+    def model_monitoring_filters(
+        self,
+        partition: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """快速读取模型监控表中的标签选项，不等待模型效果全量聚合。"""
+        selected = partition
+        if selected is None:
+            partitions = self.model_monitoring_partitions()
+            if not partitions:
+                raise AttributionServiceError("模型监控表未找到可用 pt 分区。")
+            selected = partitions[0]
+        if not SAFE_PARTITION.fullmatch(selected):
+            raise AttributionServiceError(f"分区 pt={selected} 格式不合法。")
+
+        cache_key = f"{self.model_monitoring_table_name}|{selected}"
+        cached = self._model_monitor_label_cache.get(cache_key)
+        if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+
+        rows = self._run_sql_rows(
+            f"""
+            SELECT
+                CAST(flag_mob_type AS STRING) AS flag_mob_type,
+                CAST(flag_product AS STRING) AS flag_product,
+                CAST(cash_ser_call_node AS STRING) AS cash_ser_call_node
+            FROM {self.model_monitoring_table_name}
+            WHERE pt = '{selected}'
+            GROUP BY CAST(flag_mob_type AS STRING), CAST(flag_product AS STRING), CAST(cash_ser_call_node AS STRING)
+            """
+        )
+        result = {
+            "partition": selected,
+            "flag_mob_type_options": sorted({str(row.get("flag_mob_type") or "未知") for row in rows}),
+            "flag_product_options": sorted({str(row.get("flag_product") or "未知") for row in rows}),
+            "cash_ser_call_node_options": list(CASH_SER_CALL_NODE_OPTIONS),
+        }
+        self._model_monitor_label_cache[cache_key] = (time.time(), result)
+        return copy.deepcopy(result)
+
+    def model_monitoring(
+        self,
+        partition: str | None = None,
+        force: bool = False,
+        flag_mob_type: str | None = None,
+        flag_product: str | None = None,
+        cash_ser_call_node: str | None = None,
+    ) -> dict[str, Any]:
+        """读取现金模型监控宽表，返回业务环节、分数分层与趋势聚合。"""
+        selected = partition
+        if selected is None:
+            partitions = self.model_monitoring_partitions()
+            if not partitions:
+                raise AttributionServiceError("模型监控表未找到可用 pt 分区。")
+            selected = partitions[0]
+        if not SAFE_PARTITION.fullmatch(selected):
+            raise AttributionServiceError(f"分区 pt={selected} 格式不合法。")
+
+        mob_type_filter = (flag_mob_type or "").strip()
+        product_filter = (flag_product or "").strip()
+        cash_ser_call_node_filter = (cash_ser_call_node or "").strip()
+        cache_key = f"{self.model_monitoring_table_name}|{selected}|{mob_type_filter}|{product_filter}|{cash_ser_call_node_filter}"
+        cached = self._model_monitor_cache.get(cache_key)
+        if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+
+        table_name = self.model_monitoring_table_name
+        label_filter_sql = _model_monitoring_label_filters(mob_type_filter, product_filter, cash_ser_call_node_filter)
+        mob_type_expr = "COALESCE(CAST(flag_mob_type AS STRING), '未知')"
+        product_expr = "COALESCE(CAST(flag_product AS STRING), '未知')"
+        score_selects: list[str] = []
+        for field, _label in MODEL_SCORES:
+            score_selects.extend(
+                [
+                    f"SUM(CASE WHEN {field} IS NOT NULL AND {field} <> '' THEN 1 ELSE 0 END) AS {field}_nonempty",
+                    f"SUM(CASE WHEN {field} = '-1' THEN 1 ELSE 0 END) AS {field}_sentinel",
+                ]
+            )
+        overview_sql = f"""
+            SELECT
+                COUNT(*) AS row_count,
+                COUNT(DISTINCT businessid) AS business_cnt,
+                COUNT(DISTINCT cid) AS cid_cnt,
+                MIN(create_time) AS min_create_time,
+                MAX(create_time) AS max_create_time,
+                MIN(event_date) AS min_event_date,
+                MAX(event_date) AS max_event_date,
+                MIN(loan_date) AS min_loan_date,
+                MAX(loan_date) AS max_loan_date,
+                SUM(CASE WHEN approval_result IS NOT NULL AND approval_result <> '' THEN 1 ELSE 0 END) AS approval_labeled_cnt,
+                SUM(CASE WHEN approval_result = '1.0' THEN 1 ELSE 0 END) AS approval_pass_cnt,
+                SUM(CASE WHEN if_loan_success IS NOT NULL THEN 1 ELSE 0 END) AS loan_labeled_cnt,
+                SUM(CASE WHEN if_loan_success = 1 THEN 1 ELSE 0 END) AS loan_success_cnt,
+                SUM(CASE WHEN repayment_status IS NOT NULL THEN 1 ELSE 0 END) AS repayment_labeled_cnt,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad,
+                {', '.join(score_selects)}
+            FROM {table_name}
+            WHERE pt = '{selected}'{label_filter_sql}
+        """
+        business_sql = f"""
+            SELECT
+                COALESCE(CAST(business_type AS STRING), '未知') AS business_type,
+                COUNT(*) AS applications,
+                SUM(CASE WHEN approval_result = '1.0' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN if_loan_success = 1 THEN 1 ELSE 0 END) AS loan_success,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad
+            FROM {table_name}
+            WHERE pt = '{selected}'{label_filter_sql}
+            GROUP BY business_type
+        """
+        daily_sql = f"""
+            SELECT
+                event_date AS day,
+                COUNT(*) AS applications,
+                SUM(CASE WHEN approval_result = '1.0' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN if_loan_success = 1 THEN 1 ELSE 0 END) AS loan_success,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad
+            FROM {table_name}
+            WHERE pt = '{selected}'{label_filter_sql} AND event_date IS NOT NULL
+            GROUP BY event_date
+            ORDER BY event_date
+        """
+        alias_expr = "COALESCE(CAST(alias AS STRING), '未知')"
+        alias_daily_sql = f"""
+            SELECT
+                event_date AS day,
+                {alias_expr} AS alias,
+                COUNT(*) AS applications,
+                SUM(CASE WHEN if_loan_success = 1 THEN 1 ELSE 0 END) AS loan_success,
+                SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
+                SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
+                SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
+                SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
+                SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
+            FROM {table_name}
+            WHERE pt = '{selected}'{label_filter_sql} AND event_date IS NOT NULL
+            GROUP BY event_date, {alias_expr}
+        """
+        score_case = """CASE
+            WHEN CAST(op_v2_score AS DOUBLE) < 0 THEN '未命中/-1'
+            WHEN CAST(op_v2_score AS DOUBLE) < 100 THEN '0-99'
+            WHEN CAST(op_v2_score AS DOUBLE) < 200 THEN '100-199'
+            WHEN CAST(op_v2_score AS DOUBLE) < 300 THEN '200-299'
+            WHEN CAST(op_v2_score AS DOUBLE) < 400 THEN '300-399'
+            WHEN CAST(op_v2_score AS DOUBLE) < 500 THEN '400-499'
+            WHEN CAST(op_v2_score AS DOUBLE) < 600 THEN '500-599'
+            WHEN CAST(op_v2_score AS DOUBLE) < 700 THEN '600-699'
+            WHEN CAST(op_v2_score AS DOUBLE) < 800 THEN '700-799'
+            ELSE '800+'
+        END"""
+        score_order_case = """CASE
+            WHEN CAST(op_v2_score AS DOUBLE) < 0 THEN 0
+            WHEN CAST(op_v2_score AS DOUBLE) < 100 THEN 1
+            WHEN CAST(op_v2_score AS DOUBLE) < 200 THEN 2
+            WHEN CAST(op_v2_score AS DOUBLE) < 300 THEN 3
+            WHEN CAST(op_v2_score AS DOUBLE) < 400 THEN 4
+            WHEN CAST(op_v2_score AS DOUBLE) < 500 THEN 5
+            WHEN CAST(op_v2_score AS DOUBLE) < 600 THEN 6
+            WHEN CAST(op_v2_score AS DOUBLE) < 700 THEN 7
+            WHEN CAST(op_v2_score AS DOUBLE) < 800 THEN 8
+            ELSE 9
+        END"""
+        score_sql = f"""
+            SELECT
+                {score_case} AS band,
+                {score_order_case} AS band_order,
+                COUNT(*) AS samples,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad
+            FROM {table_name}
+            WHERE pt = '{selected}'{label_filter_sql} AND op_v2_score IS NOT NULL AND op_v2_score <> ''
+            GROUP BY {score_case}, {score_order_case}
+            ORDER BY band_order
+        """
+        score_map_entries = ",\n".join(
+            f"'{field}', CAST({field} AS STRING)"
+            for field, _label in MODEL_SCORES
+        )
+        model_effect_sql = f"""
+            SELECT
+                event_date AS day,
+                {alias_expr} AS alias,
+                model,
+                FLOOR(CAST(score_value AS DOUBLE) / 50) AS score_bin,
+                COUNT(*) AS score_valid_cnt,
+                SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
+                SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
+                SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
+                SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
+                SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
+            FROM {table_name}
+            LATERAL VIEW EXPLODE(MAP(
+                {score_map_entries}
+            )) score_expanded AS model, score_value
+            WHERE pt = '{selected}'{label_filter_sql}
+              AND event_date IS NOT NULL
+              AND score_value IS NOT NULL AND score_value <> ''
+              AND CAST(score_value AS DOUBLE) >= 0
+            GROUP BY event_date, {alias_expr}, model, FLOOR(CAST(score_value AS DOUBLE) / 50)
+        """
+        label_options_sql = f"""
+            SELECT
+                CAST(flag_mob_type AS STRING) AS flag_mob_type,
+                CAST(flag_product AS STRING) AS flag_product,
+                CAST(cash_ser_call_node AS STRING) AS cash_ser_call_node
+            FROM {table_name}
+            WHERE pt = '{selected}'
+            GROUP BY CAST(flag_mob_type AS STRING), CAST(flag_product AS STRING), CAST(cash_ser_call_node AS STRING)
+        """
+        overview_rows = self._run_sql_rows(overview_sql)
+        if not overview_rows:
+            raise AttributionServiceError(f"pt={selected} 没有模型监控数据。")
+        label_option_rows = self._run_sql_rows(label_options_sql)
+        payload = build_monitoring_payload(
+            overview=overview_rows[0],
+            business_rows=self._run_sql_rows(business_sql),
+            daily_rows=self._run_sql_rows(daily_sql),
+            score_band_rows=self._run_sql_rows(score_sql),
+            model_effect_rows=self._run_sql_rows(model_effect_sql),
+            alias_daily_rows=self._run_sql_rows(alias_daily_sql),
+            flag_mob_type_options=[
+                str(row.get("flag_mob_type") or "未知")
+                for row in label_option_rows
+            ],
+            flag_product_options=[
+                str(row.get("flag_product") or "未知")
+                for row in label_option_rows
+            ],
+            selected_flag_mob_type=mob_type_filter,
+            selected_flag_product=product_filter,
+            selected_cash_ser_call_node=cash_ser_call_node_filter,
+            cash_ser_call_node_options=[
+                value for value in CASH_SER_CALL_NODE_OPTIONS
+            ],
+            partition=selected,
+            table_name=table_name,
+        )
+        self._model_monitor_cache[cache_key] = (time.time(), payload)
+        return copy.deepcopy(payload)
 
     # ---------- 磁盘持久化缓存: 服务重启后依然秒开 ----------
     def _disk_cache_path(self, key: str) -> Path:
@@ -908,6 +1219,39 @@ def dashboard(
     try:
         payload = service.with_rule_statuses(service.dashboard(partition=pt, force=force, offset=offset))
         return JSONResponse(content=json_safe(payload))
+    except Exception as exc:
+        raise handle_error(exc) from exc
+
+
+@app.get("/api/model-monitoring/filters")
+def model_monitoring_filters(
+    pt: str | None = Query(default=None, max_length=64),
+    force: bool = Query(default=False),
+    _user: dict = Depends(require_perm("model")),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=json_safe(service.model_monitoring_filters(partition=pt, force=force)))
+    except Exception as exc:
+        raise handle_error(exc) from exc
+
+
+@app.get("/api/model-monitoring")
+def model_monitoring(
+    pt: str | None = Query(default=None, max_length=64),
+    force: bool = Query(default=False),
+    flag_mob_type: str | None = Query(default=None, max_length=64),
+    flag_product: str | None = Query(default=None, max_length=64),
+    cash_ser_call_node: str | None = Query(default=None, max_length=64),
+    _user: dict = Depends(require_perm("model")),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=json_safe(service.model_monitoring(
+            partition=pt,
+            force=force,
+            flag_mob_type=flag_mob_type,
+            flag_product=flag_product,
+            cash_ser_call_node=cash_ser_call_node,
+        )))
     except Exception as exc:
         raise handle_error(exc) from exc
 

@@ -24,7 +24,7 @@ import Lifecycle, { STAGES, type StageKey } from '@/pages/Lifecycle';
 import Channel from '@/pages/Channel';
 import Fraud from '@/pages/Fraud';
 import Vintage from '@/pages/Vintage';
-import ModelScore from '@/pages/ModelScore';
+import ModelEffectiveness from '@/pages/ModelEffectiveness';
 import Stability from '@/pages/Stability';
 import CreditStrategy from '@/pages/CreditStrategy';
 import AttributionMonitor from '@/pages/AttributionMonitor';
@@ -479,7 +479,7 @@ export default function App() {
               {page === 'channel' && <Channel />}
               {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}
-              {page === 'model' && <ModelScore />}
+              {page === 'model' && <ModelEffectiveness />}
               {page === 'stability' && <Stability />}
               {page === 'users' && session && <UsersPage currentUser={session.user} />}
             </motion.div>
