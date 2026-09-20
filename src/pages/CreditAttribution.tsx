@@ -900,14 +900,7 @@ export default function CreditAttribution() {
     { key: 'source', title: '来源', width: 118, render: (record) => <SourceTag source={record.source} /> },
     {
       key: 'path', title: '异常归因路径', width: 360,
-      render: (record) => record.level === 0 && !record.is_tracked_only ? (
-        <PathHoverTip path={record.path}>
-          <span
-            className="max-w-[340px] cursor-pointer truncate text-slate-500 hover:text-slate-700"
-            title="悬停查看完整值"
-          >{record.path}</span>
-        </PathHoverTip>
-      ) : (
+      render: (record) => (
         <PathHoverTip path={record.path}>
           <button
             onClick={() => selectAlertPath(record)}
