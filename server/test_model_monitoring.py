@@ -5,6 +5,8 @@ from server.model_monitoring import (
     build_monitoring_payload,
     build_model_effect_trend,
     build_model_effect_weekly,
+    build_model_score_cohort_trend,
+    build_model_score_stability_weekly,
     build_score_band_metrics,
     build_stage_metrics,
 )
@@ -385,3 +387,55 @@ def test_model_effect_weekly_uses_available_fpd7_effect_when_population_ratio_is
     assert result[0]["maturity_warning"] is False
     assert result[0]["auc"] == 0.8
     assert result[0]["ks"] == 0.6
+
+
+def test_model_score_stability_weekly_aggregates_deciles_and_rates():
+    result = build_model_score_stability_weekly(
+        [
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 1, "customer_count": 60, "samples": 60, "approved": 30, "loan_success": 20, "fpd7_base": 50, "fpd7_bad": 5},
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 10, "customer_count": 40, "samples": 40, "approved": 30, "loan_success": 30, "fpd7_base": 40, "fpd7_bad": 20},
+            {"day": "2026-09-08", "alias": "CASHJQ", "model": "m", "bin": 1, "customer_count": 40, "samples": 40, "approved": 20, "loan_success": 10, "fpd7_base": 30, "fpd7_bad": 3},
+            {"day": "2026-09-08", "alias": "CASHJQ", "model": "m", "bin": 10, "customer_count": 60, "samples": 60, "approved": 36, "loan_success": 42, "fpd7_base": 50, "fpd7_bad": 25},
+        ],
+        target="fpd7",
+        min_mature_count=50,
+    )
+
+    first = next(row for row in result if row["bin"] == 1)
+    last = next(row for row in result if row["bin"] == 10)
+    assert first["week_start"] == "2026-09-07"
+    assert first["customer_count"] == 100
+    assert first["customer_share"] == 0.5
+    assert first["approval_rate"] == 0.5
+    assert first["loan_success_rate"] == 0.3
+    assert first["badrate"] == 0.1
+    assert last["badrate"] == 0.5
+
+
+def test_model_score_stability_hides_badrate_when_target_base_is_below_100():
+    result = build_model_score_stability_weekly(
+        [
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 1, "customer_count": 100, "samples": 100, "approved": 50, "loan_success": 50, "fpd7_base": 99, "fpd7_bad": 10},
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 10, "customer_count": 100, "samples": 100, "approved": 60, "loan_success": 60, "fpd7_base": 100, "fpd7_bad": 20},
+        ],
+        target="fpd7",
+    )
+
+    by_bin = {row["bin"]: row for row in result}
+    assert by_bin[1]["badrate"] is None
+    assert by_bin[10]["badrate"] == 0.2
+
+
+def test_model_score_cohort_trend_normalizes_customer_share_per_day():
+    result = build_model_score_cohort_trend(
+        [
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 1, "customer_count": 25},
+            {"day": "2026-09-07", "alias": "CASHJQ", "model": "m", "bin": 10, "customer_count": 75},
+            {"day": "2026-09-08", "alias": "CASHJQ", "model": "m", "bin": 1, "customer_count": 40},
+            {"day": "2026-09-08", "alias": "CASHJQ", "model": "m", "bin": 10, "customer_count": 60},
+        ]
+    )
+
+    day_one = [row for row in result if row["day"] == "2026-09-07"]
+    assert {row["customer_share"] for row in day_one} == {0.25, 0.75}
+    assert sum(row["customer_share"] for row in day_one) == 1

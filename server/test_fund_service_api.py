@@ -87,10 +87,10 @@ def test_partitions_endpoint(client: TestClient):
 
 
 def test_dashboard_requires_compute_first(client: TestClient):
-    # 无缓存且非 force → 503 提示刷新
+    # 无缓存且非 force → 503 提示自动触发首次计算
     response = client.get("/api/fund-attribution/dashboard", headers=AUTH)
     assert response.status_code == 503
-    assert "刷新" in response.json()["detail"]
+    assert "正在自动触发首次计算" in response.json()["detail"]
 
 
 def test_dashboard_force_computes_and_caches(client: TestClient):

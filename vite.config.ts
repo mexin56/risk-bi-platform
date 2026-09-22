@@ -16,7 +16,15 @@ export default defineConfig({
     // chokidar 对被锁文件建 watcher 会抛 EBUSY 并击穿整个 dev server（进程直接退出），
     // 因此必须把数据目录排除在 HMR 文件监听之外。
     watch: {
-      ignored: ['**/server/data/**', '**/*.duckdb*', '**/*.parquet', '**/dist/**'],
+      ignored: [
+        '**/server/data/**',
+        '**/*.duckdb*',
+        '**/*.parquet',
+        '**/dist/**',
+        '**/.pytest_tmp*/**',
+        '**/agentmonitor.pytest_tmp*/**',
+        '**/.superpowers/**',
+      ],
     },
     proxy: {
       '/api': {

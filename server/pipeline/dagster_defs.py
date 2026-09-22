@@ -1,6 +1,6 @@
 """授信归因夜间调度(Dagster)。
 
-上游 MaxCompute 数据每日 09:00 前产出;本作业 09:50(Asia/Shanghai)执行:
+上游 MaxCompute 数据每日 09:00 前产出;本作业 11:20(Asia/Shanghai)执行:
 
     resolve_target_partition  # 校验最新 pt 就绪(未就绪自动重试,最多 3 次×20min)
         └→ publish_attribution  # 复用 pipeline.cli.compute_and_publish
@@ -8,7 +8,7 @@
 
 组件:
 - job:     nightly_attribution_job(in-process 执行,Windows 规避 spawn 兼容问题)
-- schedule: nightly_attribution_0950(cron "50 9 * * *")
+- schedule: nightly_attribution_1120(cron "20 11 * * *")
 - sensor:  nightly_attribution_failure_sensor(失败告警钩子,当前仅记 ERROR 日志)
 
 本地校验(在 server/ 目录):
@@ -170,6 +170,12 @@ def notify_attribution_dingtalk(context) -> dict[str, Any]:
         context.log.warning("未配置 ATTRIBUTION_WEB_URL，无法生成完整长截图")
         return {"status": "skipped", "pt": pt, "reason": "missing_web_url"}
 
+    ledger = NotificationLedger(NOTIFICATION_LEDGER_PATH)
+    has_delivery_channel = s3_notifier is not None or bool(notifier.webhook_url)
+    if has_delivery_channel and not ledger.claim(pt):
+        context.log.info("pt=%s already sent, skip duplicate notification", pt)
+        return {"status": "already_sent", "pt": pt}
+
     report_path = _notification_report_path(pt)
     try:
         capture_attribution_page(
@@ -179,6 +185,8 @@ def notify_attribution_dingtalk(context) -> dict[str, Any]:
             report_path,
         )
     except Exception:
+        if has_delivery_channel:
+            ledger.release(pt)
         context.log.exception("生成授信归因完整长截图失败，pt=%s", pt)
         raise
 
@@ -206,13 +214,9 @@ def notify_attribution_dingtalk(context) -> dict[str, Any]:
             "digest": digest,
         }
 
-    ledger = NotificationLedger(NOTIFICATION_LEDGER_PATH)
-    if not ledger.claim(pt):
-        context.log.info("pt=%s 已发送过钉钉日报，跳过重复发送", pt)
-        return {"status": "already_sent", "pt": pt, "report_path": str(report_path)}
     try:
         if s3_notifier is not None:
-            response = s3_notifier.publish(report_path, pt)
+            response = s3_notifier.upload(report_path, pt)
             summary_markdown = format_s3_summary_markdown(
                 digest,
                 image_url=response["image_url"],
@@ -234,7 +238,7 @@ def notify_attribution_dingtalk(context) -> dict[str, Any]:
 
 
 @job(
-    description="授信归因每日 10:30 截图和预警摘要通知",
+    description="授信归因每日 11:40 截图和预警摘要通知",
     executor_def=in_process_executor,
 )
 def daily_attribution_dingtalk_job():
@@ -243,23 +247,67 @@ def daily_attribution_dingtalk_job():
 
 nightly_schedule = ScheduleDefinition(
     job=nightly_attribution_job,
-    cron_schedule="50 9 * * *",  # 每天 09:50,上游 09:00 出数之后
+    cron_schedule="20 11 * * *",  # 每天 11:20,上游数据出数之后
     execution_timezone="Asia/Shanghai",
-    name="nightly_attribution_0950",
+    name="nightly_attribution_1120",
 )
 
 
 dingtalk_schedule = ScheduleDefinition(
     job=daily_attribution_dingtalk_job,
-    cron_schedule="30 10 * * *",
+    cron_schedule="40 11 * * *",
     execution_timezone="Asia/Shanghai",
-    name="daily_attribution_dingtalk_1030",
+    name="daily_attribution_dingtalk_1130",
+)
+
+
+MODEL_MONITOR_CACHE_MAX_AGE_HOURS = float(os.getenv("MODEL_MONITOR_CACHE_MAX_AGE_HOURS", "20"))
+
+
+@op(description="预计算模型监控默认视图（全部模型分）并写入磁盘缓存，供页面秒开")
+def precompute_model_monitoring(context) -> dict[str, Any]:
+    service = _service()
+    partitions = service.model_monitoring_partitions()
+    if not partitions:
+        raise Failure(description="模型监控表没有任何可用 pt 分区")
+    latest = partitions[0]
+    info = service.model_monitoring_disk_cache_info(latest)
+    age_seconds = datetime.now(timezone.utc).timestamp() - float((info or {}).get("generated_at") or 0)
+    if info and age_seconds < MODEL_MONITOR_CACHE_MAX_AGE_HOURS * 3600:
+        context.log.info("模型监控缓存已新鲜(pt=%s, %.1f 小时前生成)，跳过预计算", latest, age_seconds / 3600)
+        # 仍确保标签选项缓存存在（缺失才查一次）
+        service.model_monitoring_filters(partition=latest)
+        return {"status": "skipped", "pt": latest, "model_count": info.get("model_count")}
+    payload = service.model_monitoring(partition=latest, force=True)
+    context.log.info(
+        "模型监控预计算完成: pt=%s models=%s weekly_rows=%s",
+        latest,
+        len(payload.get("model_coverage") or []),
+        len(payload.get("model_effect_weekly") or []),
+    )
+    service.model_monitoring_filters(partition=latest, force=True)
+    return {"status": "computed", "pt": latest, "model_count": len(payload.get("model_coverage") or [])}
+
+
+@job(
+    description="模型监控夜间预计算（缓存默认全模型分视图）",
+    executor_def=in_process_executor,
+)
+def nightly_model_monitoring_job():
+    precompute_model_monitoring()
+
+
+model_monitoring_schedule = ScheduleDefinition(
+    job=nightly_model_monitoring_job,
+    cron_schedule="50 11 * * *",  # 每天 11:50,等上游模型监控表出数(避开授信归因 11:20/11:30)
+    execution_timezone="Asia/Shanghai",
+    name="nightly_model_monitoring_1150",
 )
 
 
 @run_status_sensor(
     run_status=DagsterRunStatus.FAILURE,
-    monitored_jobs=[nightly_attribution_job, daily_attribution_dingtalk_job],
+    monitored_jobs=[nightly_attribution_job, daily_attribution_dingtalk_job, nightly_model_monitoring_job],
     name="nightly_attribution_failure_sensor",
     minimum_interval_seconds=60,
 )
@@ -272,7 +320,7 @@ def nightly_attribution_failure_sensor(context):
 
 
 defs = Definitions(
-    jobs=[nightly_attribution_job, daily_attribution_dingtalk_job],
-    schedules=[nightly_schedule, dingtalk_schedule],
+    jobs=[nightly_attribution_job, daily_attribution_dingtalk_job, nightly_model_monitoring_job],
+    schedules=[nightly_schedule, dingtalk_schedule, model_monitoring_schedule],
     sensors=[nightly_attribution_failure_sensor],
 )

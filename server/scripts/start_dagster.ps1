@@ -14,26 +14,25 @@ $logDir = Join-Path $serverDir "dagster_home\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 function Start-DagsterProc {
-    param([string]$Name, [string[]]$ProcArgs)
-    $existing = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-        Where-Object { $_.CommandLine -like "*$Name*" }
+    param([string]$Name, [string]$FilePath, [string[]]$ProcArgs)
+    $existing = Get-Process -Name $Name -ErrorAction SilentlyContinue
     if ($existing) {
         Write-Host "$Name already running (pid $($existing.ProcessId -join ','))"
         return
     }
     $out = Join-Path $logDir "$Name.out.log"
     $err = Join-Path $logDir "$Name.err.log"
-    Start-Process -FilePath "python" -ArgumentList $ProcArgs `
+    $resolvedFilePath = (Get-Command $FilePath -ErrorAction Stop).Source
+    Start-Process -FilePath $resolvedFilePath -ArgumentList $ProcArgs `
         -RedirectStandardOutput $out -RedirectStandardError $err `
         -WindowStyle Hidden
     Write-Host "$Name started (logs: $logDir)"
 }
 
-# daemon 负责 schedule/sensor 触发; webserver 提供 UI 与手动触发入口
-Start-DagsterProc -Name "dagster-daemon" -ProcArgs @("-m", "dagster.daemon", "run")
+# Start the daemon first; it owns schedule and sensor execution.
+Start-DagsterProc -Name "dagster-daemon" -FilePath "dagster-daemon.exe" -ProcArgs @("run")
 Start-Sleep -Seconds 3
-Start-DagsterProc -Name "dagster-webserver" -ProcArgs @(
-    "-m", "dagster.webserver",
+Start-DagsterProc -Name "dagster-webserver" -FilePath "dagster-webserver.exe" -ProcArgs @(
     "--host", "127.0.0.1", "--port", "3001",
     "--workspace", (Join-Path $serverDir "workspace.yaml")
 )

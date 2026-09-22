@@ -11,9 +11,9 @@ MODEL_SCORES: tuple[tuple[str, str], ...] = (
     ("ng_cashjq_utilization_high_v1_score", "额度使用率高V1"),
     ("ng_cashjq_loancnt_1_4_v1_score", "借款次数1-4V1"),
     ("ng_cashjq_loancnt_1plus_v1_score", "借款次数1+V1"),
-    ("ng_mcr0001_score", "MCR0001"),
-    ("ng_mcr0002_score", "MCR0002"),
-    ("ng_mcr0003_score", "MCR0003"),
+    ("ng_mtx0001_01_score", "MTX0001"),
+    ("ng_mtx0002_01_score", "MTX0002"),
+    ("ng_mtx0003_01_score", "MTX0003"),
     ("ng_mcr0004_01_score", "MCR0004"),
     ("ng_mcr0005_01_score", "MCR0005"),
     ("lgb_jy_model_level1_20250211_score", "LGB授信L1"),
@@ -414,6 +414,115 @@ def build_model_effect_weekly(
     return sorted(result, key=lambda item: (item["week_start"], item["alias"], item["model"]))
 
 
+def _qcut_bin(value: Any) -> int:
+    return max(1, min(10, _count(value)))
+
+
+def build_model_score_stability_weekly(
+    rows: Sequence[Mapping[str, Any]],
+    target: str = "fpd7",
+    min_mature_count: int = 100,
+) -> list[dict[str, Any]]:
+    """按业务环节和模型分 qcut10 后，聚合每周各分箱的样本占比与通过/坏账率。"""
+    if target not in TARGET_FIELDS:
+        raise ValueError(f"unsupported target: {target}")
+    base_field, bad_field = TARGET_FIELDS[target]
+    grouped: dict[tuple[str, str, str, int], dict[str, int]] = {}
+    weekly_totals: dict[tuple[str, str, str], int] = {}
+    for row in rows:
+        bounds = _week_bounds(row.get("day"))
+        model = str(row.get("model") or "")
+        if not bounds or not model:
+            continue
+        alias = str(row.get("alias") or "未知")
+        bin_number = _qcut_bin(row.get("bin"))
+        customer_count = _count(row.get("customer_count", row.get("samples")))
+        key = (bounds[0], alias, model, bin_number)
+        item = grouped.setdefault(
+            key,
+            {
+                "customer_count": 0,
+                "samples": 0,
+                "approval_labeled": 0,
+                "approved": 0,
+                "loan_labeled": 0,
+                "loan_success": 0,
+                base_field: 0,
+                bad_field: 0,
+            },
+        )
+        item["customer_count"] += customer_count
+        item["samples"] += _count(row.get("samples", customer_count))
+        item["approval_labeled"] += _count(row.get("approval_labeled", row.get("samples", customer_count)))
+        item["approved"] += _count(row.get("approved"))
+        item["loan_labeled"] += _count(row.get("loan_labeled", row.get("samples", customer_count)))
+        item["loan_success"] += _count(row.get("loan_success"))
+        item[base_field] += _count(row.get(base_field))
+        item[bad_field] += min(_count(row.get(bad_field)), _count(row.get(base_field)))
+        weekly_totals[(bounds[0], alias, model)] = weekly_totals.get((bounds[0], alias, model), 0) + customer_count
+
+    result: list[dict[str, Any]] = []
+    for (week_start, alias, model, bin_number), item in grouped.items():
+        total_customers = weekly_totals[(week_start, alias, model)]
+        target_base = item[base_field]
+        target_bad = item[bad_field]
+        result.append(
+            {
+                "week_start": week_start,
+                "week_end": (datetime.strptime(week_start, "%Y-%m-%d").date() + timedelta(days=6)).isoformat(),
+                "alias": alias,
+                "model": model,
+                "target": target,
+                "bin": bin_number,
+                "bin_label": f"Q{bin_number}",
+                "customer_count": item["customer_count"],
+                "samples": item["samples"],
+                "customer_share": safe_ratio(item["customer_count"], total_customers),
+                "approval_rate": safe_ratio(item["approved"], item["approval_labeled"]),
+                "loan_success_rate": safe_ratio(item["loan_success"], item["loan_labeled"]),
+                "target_base": target_base,
+                "target_bad": target_bad,
+                "badrate": safe_ratio(target_bad, target_base) if target_base >= min_mature_count else None,
+                "maturity_warning": target_base < min_mature_count,
+            }
+        )
+    return sorted(result, key=lambda item: (item["week_start"], item["alias"], item["model"], item["bin"]), reverse=False)
+
+
+def build_model_score_cohort_trend(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """按固定 qcut10 分箱边界聚合日粒度的客户占比，供客群变化趋势使用。"""
+    grouped: dict[tuple[str, str, str, int], int] = {}
+    daily_totals: dict[tuple[str, str, str], int] = {}
+    for row in rows:
+        day = str(row.get("day") or "")[:10]
+        model = str(row.get("model") or "")
+        if not day or not model:
+            continue
+        alias = str(row.get("alias") or "未知")
+        bin_number = _qcut_bin(row.get("bin"))
+        customer_count = _count(row.get("customer_count", row.get("samples")))
+        key = (day, alias, model, bin_number)
+        grouped[key] = grouped.get(key, 0) + customer_count
+        daily_key = (day, alias, model)
+        daily_totals[daily_key] = daily_totals.get(daily_key, 0) + customer_count
+
+    result: list[dict[str, Any]] = []
+    for (day, alias, model, bin_number), customer_count in grouped.items():
+        total_customers = daily_totals[(day, alias, model)]
+        result.append(
+            {
+                "day": day,
+                "alias": alias,
+                "model": model,
+                "bin": bin_number,
+                "bin_label": f"Q{bin_number}",
+                "customer_count": customer_count,
+                "customer_share": safe_ratio(customer_count, total_customers),
+            }
+        )
+    return sorted(result, key=lambda item: (item["day"], item["alias"], item["model"], item["bin"]))
+
+
 def build_latest_model_effect(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """取每个模型和目标的最新可用日期；若尚无可用日则保留最新的警告行。"""
     grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
@@ -460,6 +569,7 @@ def build_monitoring_payload(
     daily_rows: Sequence[Mapping[str, Any]],
     score_band_rows: Sequence[Mapping[str, Any]],
     model_effect_rows: Sequence[Mapping[str, Any]] = (),
+    model_score_qcut_rows: Sequence[Mapping[str, Any]] = (),
     alias_daily_rows: Sequence[Mapping[str, Any]] = (),
     flag_mob_type_options: Sequence[str] = (),
     flag_product_options: Sequence[str] = (),
@@ -486,6 +596,11 @@ def build_monitoring_payload(
             alias_daily_rows or daily_rows,
             target=target,
         )
+    ]
+    model_score_stability_weekly = [
+        stability
+        for target in TARGET_FIELDS
+        for stability in build_model_score_stability_weekly(model_score_qcut_rows, target=target)
     ]
     return {
         "meta": {
@@ -522,6 +637,8 @@ def build_monitoring_payload(
         "model_coverage": build_model_coverage(overview, total),
         "model_effect_trend": model_effect_trend,
         "model_effect_weekly": model_effect_weekly,
+        "model_score_stability_weekly": model_score_stability_weekly,
+        "model_score_cohort_trend": build_model_score_cohort_trend(model_score_qcut_rows),
         "model_effect_aliases": sorted(
             {
                 str(row.get("alias") or "未知")

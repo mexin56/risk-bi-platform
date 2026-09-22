@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
+import ReactECharts from 'echarts-for-react';
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Database, Filter, RefreshCw } from 'lucide-react';
+import ChartCard from '@/components/ChartCard';
 import {
   fetchModelMonitoring,
   fetchModelMonitoringFilters,
+  fetchModelScoreMonitoring,
   type ModelEffectWeekly,
   type ModelMonitoringPayload,
+  type ModelScoreCohortTrend,
+  type ModelScoreMonitoringPayload,
+  type ModelScoreStabilityWeekly,
   type TargetMetric,
 } from '@/lib/modelMonitoringApi';
 import { commonWeeklySampleStats, metricBarWidth, modelFieldsWithAuc, weeksWithAuc } from '@/lib/modelEffectTable';
+import { baseOption } from '@/lib/chartTheme';
+import { getTheme } from '@/lib/theme';
 
 const numberFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
 const targetLabels: Record<TargetMetric, string> = {
@@ -62,6 +70,232 @@ function LoadingState() {
 
 type MetricKey = 'auc' | 'ks';
 type SortState = { week: string; metric: MetricKey; direction: 'asc' | 'desc' };
+
+type ModelMonitorTab = 'effect' | 'stability' | 'cohort';
+type CohortRange = 'month' | 'current_month' | 'week' | 'day';
+
+const MODEL_MONITOR_TABS: Array<{ key: ModelMonitorTab; label: string }> = [
+  { key: 'effect', label: '模型效果监控' },
+  { key: 'stability', label: '模型分稳定性变化' },
+  { key: 'cohort', label: '客群变化' },
+];
+
+const COHORT_RANGES: Array<{ key: CohortRange; label: string }> = [
+  { key: 'month', label: '最近一月' },
+  { key: 'current_month', label: '本月' },
+  { key: 'week', label: '本周' },
+  { key: 'day', label: '近一天' },
+];
+
+function formatRate(value: number | null | undefined): string {
+  return value == null || Number.isNaN(value) ? '—' : `${(value * 100).toFixed(2)}%`;
+}
+
+function formatDay(value: string): string {
+  return value ? value.slice(5).replace('-', '/') : '—';
+}
+
+function parseDay(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function isoDay(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function addDays(value: string, amount: number): string {
+  const parsed = parseDay(value);
+  if (!parsed) return value;
+  parsed.setUTCDate(parsed.getUTCDate() + amount);
+  return isoDay(parsed);
+}
+
+function cohortStartDay(range: CohortRange, endDay: string): string {
+  const parsed = parseDay(endDay);
+  if (!parsed) return endDay;
+  if (range === 'day') return endDay;
+  if (range === 'week') {
+    const dayOfWeek = parsed.getUTCDay();
+    parsed.setUTCDate(parsed.getUTCDate() + (dayOfWeek === 0 ? -6 : 1 - dayOfWeek));
+    return isoDay(parsed);
+  }
+  if (range === 'current_month') {
+    parsed.setUTCDate(1);
+    return isoDay(parsed);
+  }
+  return addDays(endDay, -29);
+}
+
+function rgbaFromHex(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  const red = parseInt(normalized.slice(0, 2), 16);
+  const green = parseInt(normalized.slice(2, 4), 16);
+  const blue = parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function binColors(): string[] {
+  const { brand } = getTheme();
+  return Array.from({ length: 10 }, (_, index) => rgbaFromHex(brand, 0.42 + index * 0.05));
+}
+
+function ModelScoreStabilityView({ rows: sourceRows, alias, target, modelField, modelName, loading, error }: { rows: ModelScoreStabilityWeekly[]; alias: string; target: TargetMetric; modelField: string; modelName: string; loading: boolean; error: string | null }) {
+  const rows = useMemo<ModelScoreStabilityWeekly[]>(
+    () => sourceRows.filter((row) => row.alias === alias && row.target === target && row.model === modelField),
+    [alias, modelField, sourceRows, target],
+  );
+  const weeks = useMemo(
+    () => [...new Set(rows.map((row) => row.week_start))].sort((left, right) => left.localeCompare(right)),
+    [rows],
+  );
+  const rowByKey = useMemo(
+    () => new Map(rows.map((row) => [`${row.week_start}|${row.bin}`, row])),
+    [rows],
+  );
+  const chartOption = useMemo(() => ({
+    ...baseOption(),
+    color: binColors(),
+    grid: { left: 12, right: 18, top: 22, bottom: 58, containLabel: true },
+    legend: { type: 'scroll', bottom: 0, left: 8, right: 8, icon: 'roundRect', itemWidth: 10, itemHeight: 10, textStyle: { fontSize: 10, color: '#646a73' } },
+    xAxis: { ...baseOption().xAxis, data: weeks.map(formatDateGroup), boundaryGap: false },
+    yAxis: { ...baseOption().yAxis, min: 0, max: 100, axisLabel: { color: '#8f959e', fontSize: 11, formatter: (value: number) => `${value}%` } },
+    series: Array.from({ length: 10 }, (_, index) => ({
+      name: `Q${index + 1}`,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 4,
+      lineStyle: { width: 1.5 },
+      data: weeks.map((week) => {
+        const value = rowByKey.get(`${week}|${index + 1}`)?.badrate;
+        return value == null ? null : Number((value * 100).toFixed(4));
+      }),
+    })),
+  }), [rowByKey, weeks]);
+
+  if (!modelField) {
+    return <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-14 text-center text-[13px] text-slate-500">请在上方“模型分”筛选器中选择一个模型分后查看稳定性变化</div>;
+  }
+  if (loading) {
+    return <div className="rounded-lg border border-slate-200 bg-white px-4 py-14 text-center text-[13px] text-slate-500">正在读取模型分稳定性数据…</div>;
+  }
+  if (error) {
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-14 text-center text-[13px] text-rose-600">模型分稳定性数据加载失败：{error}</div>;
+  }
+  if (!rows.length) {
+    return <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-14 text-center text-[13px] text-slate-500">当前筛选条件暂无模型分稳定性数据</div>;
+  }
+
+  const tableRows = [...rows].sort((left, right) => right.week_start.localeCompare(left.week_start) || left.bin - right.bin);
+  return (
+    <div className="space-y-4">
+      <ChartCard title="模型分分箱 badrate 周趋势" subtitle={`${modelName} · ${targetLabels[target]} · Q1 为低分段，Q10 为高分段`}>
+        <ReactECharts option={chartOption} style={{ height: 350 }} notMerge />
+      </ChartCard>
+      <ChartCard title="模型分稳定性明细" subtitle="用于观察不同分箱的客户占比、通过率、交易通过率和 badrate 排序性">
+        <div className="max-h-[430px] overflow-auto">
+          <table className="min-w-[920px] w-full border-separate border-spacing-0 text-[12px] text-slate-700">
+            <thead className="sticky top-0 z-10 bg-white">
+              <tr>
+                {['统计周', '分箱', '客户量', '客户占比', '通过率', '交易通过率', `${targetLabels[target]} badrate`, '到期样本数'].map((title) => <th key={title} className="border-b border-r border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 last:border-r-0">{title}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((row) => (
+                <tr key={`${row.week_start}|${row.bin}`} className="hover:bg-slate-50">
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5">{formatDateGroup(row.week_start)}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 font-medium">{row.bin_label}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 text-right tabular-nums">{numberFormat.format(row.customer_count)}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 text-right tabular-nums">{formatRate(row.customer_share)}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 text-right tabular-nums">{formatRate(row.approval_rate)}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 text-right tabular-nums">{formatRate(row.loan_success_rate)}</td>
+                  <td className="border-b border-r border-slate-100 px-3 py-2.5 text-right font-medium tabular-nums">{formatRate(row.badrate)}</td>
+                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{numberFormat.format(row.target_base)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
+
+function ModelScoreCohortView({ rows: sourceRows, alias, modelField, modelName, loading, error }: { rows: ModelScoreCohortTrend[]; alias: string; modelField: string; modelName: string; loading: boolean; error: string | null }) {
+  const [range, setRange] = useState<CohortRange>('month');
+  const rows = useMemo<ModelScoreCohortTrend[]>(
+    () => sourceRows.filter((row) => row.alias === alias && row.model === modelField),
+    [alias, modelField, sourceRows],
+  );
+  const endDay = useMemo(() => rows.reduce((latest, row) => row.day > latest ? row.day : latest, ''), [rows]);
+  const startDay = cohortStartDay(range, endDay);
+  const visibleRows = useMemo(
+    () => rows.filter((row) => row.day >= startDay && row.day <= endDay),
+    [endDay, rows, startDay],
+  );
+  const days = useMemo(
+    () => [...new Set(visibleRows.map((row) => row.day))].sort((left, right) => left.localeCompare(right)),
+    [visibleRows],
+  );
+  const rowByKey = useMemo(
+    () => new Map(visibleRows.map((row) => [`${row.day}|${row.bin}`, row])),
+    [visibleRows],
+  );
+  const chartOption = useMemo(() => ({
+    ...baseOption(),
+    color: binColors(),
+    grid: { left: 12, right: 18, top: 22, bottom: 58, containLabel: true },
+    legend: { type: 'scroll', bottom: 0, left: 8, right: 8, icon: 'roundRect', itemWidth: 10, itemHeight: 10, textStyle: { fontSize: 10, color: '#646a73' } },
+    xAxis: { ...baseOption().xAxis, data: days.map(formatDay), boundaryGap: false },
+    yAxis: { ...baseOption().yAxis, min: 0, max: 100, axisLabel: { color: '#8f959e', fontSize: 11, formatter: (value: number) => `${value}%` } },
+    series: Array.from({ length: 10 }, (_, index) => ({
+      name: `Q${index + 1}`,
+      type: 'line',
+      stack: 'share',
+      smooth: true,
+      symbol: 'none',
+      areaStyle: { opacity: 0.22 },
+      lineStyle: { width: 1 },
+      data: days.map((day) => {
+        const value = rowByKey.get(`${day}|${index + 1}`)?.customer_share;
+        return value == null ? null : Number((value * 100).toFixed(4));
+      }),
+    })),
+  }), [days, rowByKey]);
+
+  if (!modelField) {
+    return <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-14 text-center text-[13px] text-slate-500">请在上方“模型分”筛选器中选择一个模型分后查看客群变化</div>;
+  }
+  if (loading) {
+    return <div className="rounded-lg border border-slate-200 bg-white px-4 py-14 text-center text-[13px] text-slate-500">正在读取客群变化数据…</div>;
+  }
+  if (error) {
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-14 text-center text-[13px] text-rose-600">客群变化数据加载失败：{error}</div>;
+  }
+  if (!rows.length) {
+    return <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-14 text-center text-[13px] text-slate-500">当前筛选条件暂无客群变化数据</div>;
+  }
+
+  const latestRows = visibleRows.filter((row) => row.day === endDay).sort((left, right) => left.bin - right.bin);
+  return (
+    <div className="space-y-4">
+      <ChartCard
+        title="模型分客群占比变化"
+        subtitle={`${modelName} · 固定 qcut10 分箱 · ${formatDay(startDay)}～${formatDay(endDay)}`}
+        extra={<div className="flex items-center gap-1 rounded-md bg-slate-100 p-1">{COHORT_RANGES.map((item) => <button key={item.key} type="button" onClick={() => setRange(item.key)} className={`rounded px-2 py-1 text-[11px] transition ${range === item.key ? 'bg-white font-medium text-[var(--brand)] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{item.label}</button>)}</div>}
+      >
+        <ReactECharts option={chartOption} style={{ height: 350 }} notMerge />
+      </ChartCard>
+      <ChartCard title="最新一天分箱占比" subtitle="用于核对当前客群结构，合计客户占比应接近 100%">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 lg:grid-cols-10">
+          {latestRows.map((row) => <div key={row.bin} className="rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2 text-center"><div className="text-[11px] font-medium text-slate-500">{row.bin_label}</div><div className="mt-1 text-[15px] font-semibold tabular-nums text-slate-700">{formatRate(row.customer_share)}</div><div className="mt-0.5 text-[10px] text-slate-400">{numberFormat.format(row.customer_count)} 人</div></div>)}
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
 
 function MetricCell({ value, index, metric }: { value: number | null | undefined; index: number; metric: MetricKey }) {
   const width = metricBarWidth(value);
@@ -212,6 +446,21 @@ export default function ModelEffectiveness() {
   const [appliedModelField, setAppliedModelField] = useState('');
   const [target, setTarget] = useState<TargetMetric>('fpd7');
   const [appliedTarget, setAppliedTarget] = useState<TargetMetric>('fpd7');
+  const [activeTab, setActiveTab] = useState<ModelMonitorTab>('effect');
+  const [scorePayload, setScorePayload] = useState<ModelScoreMonitoringPayload | null>(null);
+  const [scoreLoading, setScoreLoading] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const [scoreRefreshKey, setScoreRefreshKey] = useState(0);
+
+  // 「全部模型分」时的兼容策略：稳定性/客群变化 tab 自动展示覆盖率最高的模型分
+  const fallbackModelField = useMemo(() => {
+    const candidates = (payload?.model_coverage ?? []).filter((row) => (row.valid ?? 0) > 0);
+    const sorted = [...candidates].sort(
+      (left, right) => (right.valid ?? 0) - (left.valid ?? 0) || left.field.localeCompare(right.field),
+    );
+    return sorted[0]?.field ?? '';
+  }, [payload]);
+  const effectiveModelField = appliedModelField || fallbackModelField;
 
   const load = async (
     force = false,
@@ -222,7 +471,9 @@ export default function ModelEffectiveness() {
     if (force) setRefreshing(true);
     else setLoading(true);
     try {
+      const selectedModelForQuery = selectionOverrides.modelField ?? modelField;
       const result = await fetchModelMonitoring(undefined, force, {
+        model: activeTab === 'effect' ? selectedModelForQuery || undefined : undefined,
         flagMobType: nextLabels.flagMobType || undefined,
         flagProduct: nextLabels.flagProduct || undefined,
         cashSerCallNode: nextLabels.cashSerCallNode || undefined,
@@ -270,6 +521,38 @@ export default function ModelEffectiveness() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'effect' || !appliedAlias || !effectiveModelField) {
+      setScoreLoading(false);
+      setScoreError(null);
+      return undefined;
+    }
+    let alive = true;
+    setScoreLoading(true);
+    setScoreError(null);
+    void fetchModelScoreMonitoring(
+      effectiveModelField,
+      appliedAlias,
+      appliedTarget,
+      payload?.meta.partition,
+      scoreRefreshKey > 0,
+      {
+        flagMobType: appliedFlagMobType || undefined,
+        flagProduct: appliedFlagProduct || undefined,
+        cashSerCallNode: appliedCashSerCallNode || undefined,
+      },
+    ).then((result) => {
+      if (alive) setScorePayload(result);
+    }).catch((cause) => {
+      if (alive) setScoreError(cause instanceof Error ? cause.message : '分箱数据加载失败');
+    }).finally(() => {
+      if (alive) setScoreLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activeTab, appliedAlias, appliedCashSerCallNode, appliedFlagMobType, appliedFlagProduct, effectiveModelField, appliedTarget, payload?.meta.partition, scoreRefreshKey]);
+
   if (loading && !payload) return <LoadingState />;
   if (!payload) {
     return (
@@ -288,22 +571,29 @@ export default function ModelEffectiveness() {
   const cashSerCallNodeSelectOptions = optionsFor(cashSerCallNodeOptions.length ? cashSerCallNodeOptions : payload.model_effect_cash_ser_call_nodes);
   const selectedRows = weeklyRowsFor(payload, appliedAlias, appliedTarget).filter((row) => !appliedModelField || row.model === appliedModelField);
   const modelOptions = payload.model_coverage.filter((row) => row.valid > 0).sort((left, right) => left.field.localeCompare(right.field));
+  const selectedModelName = modelOptions.find((row) => row.field === effectiveModelField)?.model ?? effectiveModelField;
+  const usingFallbackModel = activeTab !== 'effect' && !appliedModelField && Boolean(effectiveModelField);
   const displayedModelFields = modelFieldsWithAuc(selectedRows, modelOptions.map((row) => row.field), appliedModelField);
   const modelCount = displayedModelFields.length;
-  const labelsChanged = flagMobType !== appliedFlagMobType || flagProduct !== appliedFlagProduct || cashSerCallNode !== appliedCashSerCallNode;
 
   const applyFilters = () => {
+    setScorePayload(null);
     setAppliedAlias(alias);
     setAppliedTarget(target);
     setAppliedModelField(modelField);
     setAppliedFlagMobType(flagMobType);
     setAppliedFlagProduct(flagProduct);
     setAppliedCashSerCallNode(cashSerCallNode);
-    if (labelsChanged) void load(false, { flagMobType, flagProduct, cashSerCallNode });
+    void load(false, { flagMobType, flagProduct, cashSerCallNode }, { alias, modelField });
   };
 
   const refreshAll = () => {
-    void Promise.all([load(true), loadFilterOptions(true)]);
+    setScorePayload(null);
+    setScoreRefreshKey((value) => value + 1);
+    void Promise.all([
+      load(true, { flagMobType: appliedFlagMobType, flagProduct: appliedFlagProduct, cashSerCallNode: appliedCashSerCallNode }, { alias: appliedAlias, modelField: appliedModelField }),
+      loadFilterOptions(true),
+    ]);
   };
 
   return (
@@ -324,6 +614,24 @@ export default function ModelEffectiveness() {
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />刷新数据
             </button>
           </div>
+        </div>
+
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-200 bg-white px-5 pt-2">
+          {MODEL_MONITOR_TABS.map((tab) => {
+            const active = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(tab.key)}
+                className={`whitespace-nowrap border-b-2 px-3 py-2 text-[12px] font-medium transition ${active ? 'border-[var(--brand)] text-[var(--brand)]' : 'border-transparent text-slate-500 hover:border-[rgba(var(--brand-rgb),0.35)] hover:text-[var(--brand)]'}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="border-b border-slate-200 bg-[#f8fafc] px-5 py-4">
@@ -368,7 +676,7 @@ export default function ModelEffectiveness() {
             <label className="min-w-0 text-[12px] font-medium text-slate-600">
               模型分
               <select value={modelField} onChange={(event) => setModelField(event.target.value)} className={selectClassName} aria-label="选择模型分">
-                <option value="">全部模型分</option>
+                <option value="">全部模型分（默认）</option>
                 {modelOptions.map((item) => <option key={item.field} value={item.field}>{item.model}</option>)}
               </select>
             </label>
@@ -378,12 +686,20 @@ export default function ModelEffectiveness() {
             </button>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-slate-400">全部模型分：模型效果监控展示全部模型分；稳定性/客群变化自动展示覆盖率最高的模型分</span>
             <span className="ml-auto text-[11px] text-slate-400">标签筛选变更后会重新读取当前 pt 的模型效果数据{loading ? '，请等待查询完成' : ''}</span>
           </div>
         </div>
 
         <div className="p-4">
-          <WeeklyEffectTable payload={payload} alias={appliedAlias} target={appliedTarget} modelField={appliedModelField} />
+          {usingFallbackModel && (
+            <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2 text-[12px] text-sky-700">
+              当前为「全部模型分」：本 tab 默认展示覆盖率最高的模型分 <span className="font-medium">{selectedModelName}</span>，可在上方筛选器切换到其它模型分。
+            </div>
+          )}
+          {activeTab === 'effect' && <WeeklyEffectTable payload={payload} alias={appliedAlias} target={appliedTarget} modelField={appliedModelField} />}
+          {activeTab === 'stability' && <ModelScoreStabilityView rows={scorePayload?.model_score_stability_weekly ?? []} alias={appliedAlias} target={appliedTarget} modelField={effectiveModelField} modelName={selectedModelName} loading={scoreLoading} error={scoreError} />}
+          {activeTab === 'cohort' && <ModelScoreCohortView rows={scorePayload?.model_score_cohort_trend ?? []} alias={appliedAlias} modelField={effectiveModelField} modelName={selectedModelName} loading={scoreLoading} error={scoreError} />}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-200 px-5 py-3 text-[11px] text-slate-500">

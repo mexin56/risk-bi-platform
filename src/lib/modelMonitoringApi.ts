@@ -104,6 +104,49 @@ export interface ModelEffectWeekly {
   maturity_warning: boolean;
 }
 
+export interface ModelScoreStabilityWeekly {
+  week_start: string;
+  week_end: string;
+  alias: string;
+  model: string;
+  target: TargetMetric;
+  bin: number;
+  bin_label: string;
+  customer_count: number;
+  samples: number;
+  customer_share: number | null;
+  approval_rate: number | null;
+  loan_success_rate: number | null;
+  target_base: number;
+  target_bad: number;
+  badrate: number | null;
+  maturity_warning: boolean;
+}
+
+export interface ModelScoreCohortTrend {
+  day: string;
+  alias: string;
+  model: string;
+  bin: number;
+  bin_label: string;
+  customer_count: number;
+  customer_share: number | null;
+}
+
+export interface ModelScoreMonitoringPayload {
+  meta: {
+    source_table: string;
+    partition: string;
+    alias: string;
+    model: string;
+    target: TargetMetric;
+    lookback_days: number;
+    qcut_rule: string;
+  };
+  model_score_stability_weekly: ModelScoreStabilityWeekly[];
+  model_score_cohort_trend: ModelScoreCohortTrend[];
+}
+
 export type LatestModelEffect = ModelEffectTrend & { status: '可用' | '成熟度不足' };
 
 export interface ModelMonitoringPayload {
@@ -138,6 +181,8 @@ export interface ModelMonitoringPayload {
   model_coverage: ModelCoverage[];
   model_effect_trend: ModelEffectTrend[];
   model_effect_weekly: ModelEffectWeekly[];
+  model_score_stability_weekly: ModelScoreStabilityWeekly[];
+  model_score_cohort_trend: ModelScoreCohortTrend[];
   model_effect_aliases: string[];
   model_effect_mob_types?: string[];
   model_effect_products?: string[];
@@ -146,6 +191,7 @@ export interface ModelMonitoringPayload {
 }
 
 export interface ModelMonitoringFilters {
+  model?: string;
   flagMobType?: string;
   flagProduct?: string;
   cashSerCallNode?: string;
@@ -170,9 +216,27 @@ export function fetchModelMonitoring(pt?: string, force = false, filters: ModelM
   const params = new URLSearchParams();
   if (pt) params.set('pt', pt);
   if (force) params.set('force', 'true');
+  if (filters.model) params.set('model', filters.model);
   if (filters.flagMobType) params.set('flag_mob_type', filters.flagMobType);
   if (filters.flagProduct) params.set('flag_product', filters.flagProduct);
   if (filters.cashSerCallNode) params.set('cash_ser_call_node', filters.cashSerCallNode);
   const suffix = params.toString();
   return api<ModelMonitoringPayload>(`/api/model-monitoring${suffix ? `?${suffix}` : ''}`);
+}
+
+export function fetchModelScoreMonitoring(
+  model: string,
+  alias: string,
+  target: TargetMetric,
+  pt?: string,
+  force = false,
+  filters: ModelMonitoringFilters = {},
+): Promise<ModelScoreMonitoringPayload> {
+  const params = new URLSearchParams({ model, alias, target });
+  if (pt) params.set('pt', pt);
+  if (force) params.set('force', 'true');
+  if (filters.flagMobType) params.set('flag_mob_type', filters.flagMobType);
+  if (filters.flagProduct) params.set('flag_product', filters.flagProduct);
+  if (filters.cashSerCallNode) params.set('cash_ser_call_node', filters.cashSerCallNode);
+  return api<ModelScoreMonitoringPayload>(`/api/model-monitoring/score?${params.toString()}`);
 }

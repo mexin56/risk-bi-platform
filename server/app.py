@@ -17,7 +17,9 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,15 @@ from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
 from attribution_notification import DEFAULT_REPORT_DIR, report_path_is_safe
 from fund_service import router as fund_router
-from model_monitoring import CASH_SER_CALL_NODE_OPTIONS, MODEL_SCORES, build_monitoring_payload
+from model_monitoring import (
+    CASH_SER_CALL_NODE_OPTIONS,
+    MODEL_SCORES,
+    TARGET_FIELDS,
+    build_model_effect_weekly,
+    build_model_score_cohort_trend,
+    build_model_score_stability_weekly,
+    build_monitoring_payload,
+)
 from warehouse import WarehouseAttributionRunner
 
 try:
@@ -55,6 +65,7 @@ SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]
 SAFE_PARTITION = re.compile(r"^[A-Za-z0-9_-]+$")
 SAFE_RECORD_ID = re.compile(r"^[0-9a-f]{12}$")
 DISK_CACHE_DIR = ROOT / "data" / "attribution_cache"
+MODEL_MONITOR_DISK_CACHE_DIR = ROOT / "data" / "model_monitoring_cache"
 
 
 class AttributionServiceError(RuntimeError):
@@ -190,6 +201,7 @@ class AttributionService:
         self._path_trend_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._model_monitor_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._model_monitor_label_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._model_score_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
         self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
@@ -358,13 +370,18 @@ class AttributionService:
         return table
 
     def model_monitoring_partitions(self) -> list[str]:
+        cached = getattr(self, "_model_monitor_partition_cache", None)
+        if cached and time.time() - cached[0] < int(os.getenv("MODEL_MONITOR_PARTITION_CACHE_SECONDS", "300")):
+            return list(cached[1])
         table = self._odps().get_table(self.model_monitoring_table_name.split(".")[-1])
         partitions: list[str] = []
         for item in table.partitions:
             match = re.search(r"pt='([^']+)'", str(item))
             if match:
                 partitions.append(match.group(1))
-        return sorted(set(partitions), reverse=True)
+        result = sorted(set(partitions), reverse=True)
+        self._model_monitor_partition_cache = (time.time(), result)
+        return list(result)
 
     def model_monitoring_filters(
         self,
@@ -385,6 +402,13 @@ class AttributionService:
         cached = self._model_monitor_label_cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
             return copy.deepcopy(cached[1])
+        if not force:
+            disk = self._load_model_monitor_disk_cache(
+                f"{cache_key}|filters", require_key="flag_mob_type_options"
+            )
+            if disk is not None:
+                self._model_monitor_label_cache[cache_key] = (time.time(), disk)
+                return copy.deepcopy(disk)
 
         rows = self._run_sql_rows(
             f"""
@@ -404,12 +428,69 @@ class AttributionService:
             "cash_ser_call_node_options": list(CASH_SER_CALL_NODE_OPTIONS),
         }
         self._model_monitor_label_cache[cache_key] = (time.time(), result)
+        self._save_model_monitor_disk_cache(f"{cache_key}|filters", result)
         return copy.deepcopy(result)
+
+    # ---------- 模型监控预计算缓存(Dagster 夜间任务写入, API 优先读取) ----------
+    def _model_monitor_disk_cache_path(self, cache_key: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", cache_key)
+        return MODEL_MONITOR_DISK_CACHE_DIR / f"{safe}.json"
+
+    def model_monitoring_default_cache_key(self, partition: str) -> str:
+        """默认视图（全模型分、无标签筛选）的缓存键，与 model_monitoring 的 cache_key 保持一致。"""
+        return "|".join([self.model_monitoring_table_name, partition, "", "", "", ""])
+
+    def model_monitoring_disk_cache_info(self, partition: str | None = None) -> dict[str, Any] | None:
+        """返回默认视图磁盘缓存的元信息（供 Dagster 判断是否需要预计算）。"""
+        selected = partition or self.model_monitoring_partitions()[0]
+        path = self._model_monitor_disk_cache_path(self.model_monitoring_default_cache_key(selected))
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return {
+            "path": str(path),
+            "partition": selected,
+            "generated_at": float(data.get("_ts") or 0),
+            "model_count": len(((data.get("payload") or {}).get("model_coverage")) or []),
+        }
+
+    def _load_model_monitor_disk_cache(
+        self, cache_key: str, *, require_key: str = "model_coverage"
+    ) -> dict[str, Any] | None:
+        path = self._model_monitor_disk_cache_path(cache_key)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            payload = data.get("payload")
+            if isinstance(payload, dict) and (not require_key or payload.get(require_key)):
+                return payload
+        except Exception:
+            pass
+        return None
+
+    def _save_model_monitor_disk_cache(self, cache_key: str, payload: dict[str, Any]) -> None:
+        try:
+            MODEL_MONITOR_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            self._model_monitor_disk_cache_path(cache_key).write_text(
+                json.dumps(
+                    {"_ts": time.time(), "cache_key": cache_key, "payload": payload},
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def model_monitoring(
         self,
         partition: str | None = None,
         force: bool = False,
+        model: str | None = None,
         flag_mob_type: str | None = None,
         flag_product: str | None = None,
         cash_ser_call_node: str | None = None,
@@ -423,15 +504,30 @@ class AttributionService:
             selected = partitions[0]
         if not SAFE_PARTITION.fullmatch(selected):
             raise AttributionServiceError(f"分区 pt={selected} 格式不合法。")
+        lookback_day = None
+        if re.fullmatch(r"\d{8}", selected):
+            lookback_day = (datetime.strptime(selected, "%Y%m%d").date() - timedelta(days=120)).isoformat()
+        event_date_filter_sql = f" AND event_date >= '{lookback_day}'" if lookback_day else ""
 
+        selected_model = (model or "").strip()
+        valid_models = {field for field, _label in MODEL_SCORES}
+        if selected_model and selected_model not in valid_models:
+            raise AttributionServiceError("模型分参数不合法。")
         mob_type_filter = (flag_mob_type or "").strip()
         product_filter = (flag_product or "").strip()
         cash_ser_call_node_filter = (cash_ser_call_node or "").strip()
-        cache_key = f"{self.model_monitoring_table_name}|{selected}|{mob_type_filter}|{product_filter}|{cash_ser_call_node_filter}"
+        cache_key = f"{self.model_monitoring_table_name}|{selected}|{selected_model}|{mob_type_filter}|{product_filter}|{cash_ser_call_node_filter}"
         cached = self._model_monitor_cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            # 内存命中但磁盘还没有（进程刚启动/未预计算）：补写磁盘缓存供后续秒开
+            if not self._model_monitor_disk_cache_path(cache_key).exists():
+                self._save_model_monitor_disk_cache(cache_key, cached[1])
             return copy.deepcopy(cached[1])
-
+        if not force:
+            disk = self._load_model_monitor_disk_cache(cache_key)
+            if disk is not None:
+                self._model_monitor_cache[cache_key] = (time.time(), disk)
+                return copy.deepcopy(disk)
         table_name = self.model_monitoring_table_name
         label_filter_sql = _model_monitoring_label_filters(mob_type_filter, product_filter, cash_ser_call_node_filter)
         mob_type_expr = "COALESCE(CAST(flag_mob_type AS STRING), '未知')"
@@ -560,39 +656,71 @@ class AttributionService:
             GROUP BY {score_case}, {score_order_case}
             ORDER BY band_order
         """
-        score_map_entries = ",\n".join(
-            f"'{field}', CAST({field} AS STRING)"
-            for field, _label in MODEL_SCORES
-        )
-        model_effect_sql = f"""
-            SELECT
-                event_date AS day,
-                {alias_expr} AS alias,
-                model,
-                FLOOR(CAST(score_value AS DOUBLE) / 50) AS score_bin,
-                COUNT(*) AS score_valid_cnt,
-                SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
-                SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
-                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
-                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
-                SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
-                SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
-                SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
-                SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
-                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
-                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
-                SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
-                SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
-            FROM {table_name}
-            LATERAL VIEW EXPLODE(MAP(
-                {score_map_entries}
-            )) score_expanded AS model, score_value
-            WHERE pt = '{selected}'{label_filter_sql}
-              AND event_date IS NOT NULL
-              AND score_value IS NOT NULL AND score_value <> ''
-              AND CAST(score_value AS DOUBLE) >= 0
-            GROUP BY event_date, {alias_expr}, model, FLOOR(CAST(score_value AS DOUBLE) / 50)
-        """
+        model_effect_sql = None
+        if selected_model:
+            model_effect_sql = f"""
+                SELECT
+                    event_date AS day,
+                    {alias_expr} AS alias,
+                    '{selected_model}' AS model,
+                    FLOOR(CAST({selected_model} AS DOUBLE) / 50) AS score_bin,
+                    COUNT(*) AS score_valid_cnt,
+                    SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
+                    SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
+                    SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                    SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                    SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
+                    SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
+                    SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
+                    SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
+                    SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                    SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                    SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                    SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
+                FROM {table_name}
+                WHERE pt = '{selected}'{label_filter_sql}
+                  AND event_date IS NOT NULL{event_date_filter_sql}
+                  AND {selected_model} IS NOT NULL
+                  AND CAST({selected_model} AS STRING) <> ''
+                  AND CAST({selected_model} AS DOUBLE) >= 0
+                GROUP BY event_date, {alias_expr}, FLOOR(CAST({selected_model} AS DOUBLE) / 50)
+            """
+        else:
+            # 未指定模型分（前端默认「全部模型分」）：一次扫描用 MAP 展开全部模型，
+            # 保证效果 tab 默认能展示全部模型分的周度区分能力。
+            score_map_entries = ",\n".join(
+                f"'{field}', CAST({field} AS STRING)"
+                for field, _label in MODEL_SCORES
+            )
+            model_effect_sql = f"""
+                SELECT
+                    event_date AS day,
+                    {alias_expr} AS alias,
+                    model,
+                    FLOOR(CAST(score_value AS DOUBLE) / 50) AS score_bin,
+                    COUNT(*) AS score_valid_cnt,
+                    SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
+                    SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
+                    SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                    SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                    SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
+                    SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
+                    SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
+                    SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
+                    SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                    SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                    SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                    SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
+                FROM {table_name}
+                LATERAL VIEW EXPLODE(MAP(
+                    {score_map_entries}
+                )) score_expanded AS model, score_value
+                WHERE pt = '{selected}'{label_filter_sql}
+                  AND event_date IS NOT NULL{event_date_filter_sql}
+                  AND score_value IS NOT NULL AND score_value <> ''
+                  AND CAST(score_value AS DOUBLE) >= 0
+                GROUP BY event_date, {alias_expr}, model, FLOOR(CAST(score_value AS DOUBLE) / 50)
+            """
         label_options_sql = f"""
             SELECT
                 CAST(flag_mob_type AS STRING) AS flag_mob_type,
@@ -602,17 +730,37 @@ class AttributionService:
             WHERE pt = '{selected}'
             GROUP BY CAST(flag_mob_type AS STRING), CAST(flag_product AS STRING), CAST(cash_ser_call_node AS STRING)
         """
-        overview_rows = self._run_sql_rows(overview_sql)
+        queries = {
+            "overview": overview_sql,
+            "business": business_sql,
+            "daily": daily_sql,
+            "score": score_sql,
+            "alias_daily": alias_daily_sql,
+            "labels": label_options_sql,
+        }
+        if model_effect_sql:
+            queries["model_effect"] = model_effect_sql
+        with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+            query_futures = {
+                name: executor.submit(self._run_sql_rows, sql)
+                for name, sql in queries.items()
+            }
+            query_rows = {
+                name: future.result()
+                for name, future in query_futures.items()
+            }
+
+        overview_rows = query_rows["overview"]
         if not overview_rows:
             raise AttributionServiceError(f"pt={selected} 没有模型监控数据。")
-        label_option_rows = self._run_sql_rows(label_options_sql)
+        label_option_rows = query_rows["labels"]
         payload = build_monitoring_payload(
             overview=overview_rows[0],
-            business_rows=self._run_sql_rows(business_sql),
-            daily_rows=self._run_sql_rows(daily_sql),
-            score_band_rows=self._run_sql_rows(score_sql),
-            model_effect_rows=self._run_sql_rows(model_effect_sql),
-            alias_daily_rows=self._run_sql_rows(alias_daily_sql),
+            business_rows=query_rows["business"],
+            daily_rows=query_rows["daily"],
+            score_band_rows=query_rows["score"],
+            model_effect_rows=query_rows.get("model_effect", []),
+            alias_daily_rows=query_rows["alias_daily"],
             flag_mob_type_options=[
                 str(row.get("flag_mob_type") or "未知")
                 for row in label_option_rows
@@ -631,6 +779,152 @@ class AttributionService:
             table_name=table_name,
         )
         self._model_monitor_cache[cache_key] = (time.time(), payload)
+        self._save_model_monitor_disk_cache(cache_key, payload)
+        return copy.deepcopy(payload)
+
+    def model_score_monitoring(
+        self,
+        model: str,
+        alias: str | None = None,
+        target: str = "fpd7",
+        partition: str | None = None,
+        force: bool = False,
+        flag_mob_type: str | None = None,
+        flag_product: str | None = None,
+        cash_ser_call_node: str | None = None,
+    ) -> dict[str, Any]:
+        """按需计算单个模型分的固定 qcut10 周度稳定性与客群占比。"""
+        if target not in TARGET_FIELDS:
+            raise AttributionServiceError("目标变量参数不合法。")
+        valid_models = {field for field, _label in MODEL_SCORES}
+        selected_model = (model or "").strip()
+        if selected_model not in valid_models:
+            raise AttributionServiceError("模型分参数不合法。")
+
+        selected = partition
+        if selected is None:
+            partitions = self.model_monitoring_partitions()
+            if not partitions:
+                raise AttributionServiceError("模型监控表未找到可用 pt 分区。")
+            selected = partitions[0]
+        if not SAFE_PARTITION.fullmatch(selected):
+            raise AttributionServiceError(f"分区 pt={selected} 格式不合法。")
+        lookback_day = None
+        if re.fullmatch(r"\d{8}", selected):
+            lookback_day = (datetime.strptime(selected, "%Y%m%d").date() - timedelta(days=30)).isoformat()
+        event_date_filter_sql = f" AND event_date >= '{lookback_day}'" if lookback_day else ""
+
+        selected_alias = (alias or "").strip()
+        mob_type_filter = (flag_mob_type or "").strip()
+        product_filter = (flag_product or "").strip()
+        cash_ser_call_node_filter = (cash_ser_call_node or "").strip()
+        cache_key = "|".join(
+            [
+                self.model_monitoring_table_name,
+                selected,
+                selected_model,
+                selected_alias,
+                target,
+                mob_type_filter,
+                product_filter,
+                cash_ser_call_node_filter,
+            ]
+        )
+        cached = self._model_score_cache.get(cache_key)
+        if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+
+        table_name = self.model_monitoring_table_name
+        label_filter_sql = _model_monitoring_label_filters(
+            mob_type_filter,
+            product_filter,
+            cash_ser_call_node_filter,
+        )
+        alias_expr = "COALESCE(CAST(alias AS STRING), '未知')"
+        alias_filter_sql = f"\n                  AND {alias_expr} = {_sql_string_literal(selected_alias)}" if selected_alias else ""
+        score_qcut_sql = f"""
+            SELECT
+                day,
+                alias,
+                '{selected_model}' AS model,
+                qcut_bin AS bin,
+                COUNT(DISTINCT cid) AS customer_count,
+                COUNT(*) AS samples,
+                SUM(CASE WHEN approval_result IS NOT NULL AND approval_result <> '' THEN 1 ELSE 0 END) AS approval_labeled,
+                SUM(CASE WHEN approval_result = '1.0' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN if_loan_success IS NOT NULL THEN 1 ELSE 0 END) AS loan_labeled,
+                SUM(CASE WHEN if_loan_success = 1 THEN 1 ELSE 0 END) AS loan_success,
+                SUM(CASE WHEN fpd1_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd1_base,
+                SUM(CASE WHEN fpd1_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd1_bad,
+                SUM(CASE WHEN fpd7_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd7_base,
+                SUM(CASE WHEN fpd7_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd7_bad,
+                SUM(CASE WHEN fpd10_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd10_base,
+                SUM(CASE WHEN fpd10_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd10_bad,
+                SUM(CASE WHEN fpd15_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd15_base,
+                SUM(CASE WHEN fpd15_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd15_bad,
+                SUM(CASE WHEN fpd30_fm_dd = 1 THEN 1 ELSE 0 END) AS fpd30_base,
+                SUM(CASE WHEN fpd30_fz_dd = 1 THEN 1 ELSE 0 END) AS fpd30_bad,
+                SUM(CASE WHEN term3_fm_dd = 1 THEN 1 ELSE 0 END) AS term3_base,
+                SUM(CASE WHEN term3_fz_dd = 1 THEN 1 ELSE 0 END) AS term3_bad
+            FROM (
+                SELECT
+                    customer_candidates.*,
+                    NTILE(10) OVER (
+                        PARTITION BY alias
+                        ORDER BY score_value, CAST(cid AS STRING), CAST(businessid AS STRING)
+                    ) AS qcut_bin
+                FROM (
+                    SELECT
+                        event_date AS day,
+                        {alias_expr} AS alias,
+                        cid,
+                        businessid,
+                        CAST({selected_model} AS DOUBLE) AS score_value,
+                        approval_result,
+                        if_loan_success,
+                        fpd1_fm_dd,
+                        fpd1_fz_dd,
+                        fpd7_fm_dd,
+                        fpd7_fz_dd,
+                        fpd10_fm_dd,
+                        fpd10_fz_dd,
+                        fpd15_fm_dd,
+                        fpd15_fz_dd,
+                        fpd30_fm_dd,
+                        fpd30_fz_dd,
+                        term3_fm_dd,
+                        term3_fz_dd,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY event_date, {alias_expr}, cid
+                            ORDER BY create_time DESC, CAST(businessid AS STRING) DESC
+                        ) AS customer_row_number
+                    FROM {table_name}
+                    WHERE pt = '{selected}'{label_filter_sql}{alias_filter_sql}
+                      AND event_date IS NOT NULL{event_date_filter_sql}
+                      AND cid IS NOT NULL
+                      AND {selected_model} IS NOT NULL
+                      AND CAST({selected_model} AS STRING) <> ''
+                      AND CAST({selected_model} AS DOUBLE) >= 0
+                ) customer_candidates
+                WHERE customer_row_number = 1
+            ) scored
+            GROUP BY day, alias, qcut_bin
+        """
+        qcut_rows = self._run_sql_rows(score_qcut_sql)
+        payload = {
+            "meta": {
+                "source_table": table_name,
+                "partition": selected,
+                "alias": selected_alias,
+                "model": selected_model,
+                "target": target,
+                "lookback_days": 30,
+                "qcut_rule": "当前 pt 最近 30 天内按业务环节和模型分固定 qcut10，Q1 为低分段，Q10 为高分段",
+            },
+            "model_score_stability_weekly": build_model_score_stability_weekly(qcut_rows, target=target),
+            "model_score_cohort_trend": build_model_score_cohort_trend(qcut_rows),
+        }
+        self._model_score_cache[cache_key] = (time.time(), payload)
         return copy.deepcopy(payload)
 
     # ---------- 磁盘持久化缓存: 服务重启后依然秒开 ----------
@@ -1239,13 +1533,48 @@ def model_monitoring_filters(
 def model_monitoring(
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
+    model: str | None = Query(default=None, max_length=128),
     flag_mob_type: str | None = Query(default=None, max_length=64),
     flag_product: str | None = Query(default=None, max_length=64),
     cash_ser_call_node: str | None = Query(default=None, max_length=64),
     _user: dict = Depends(require_perm("model")),
 ) -> JSONResponse:
+    if model and model.strip() not in {field for field, _label in MODEL_SCORES}:
+        raise HTTPException(status_code=422, detail="模型分参数不合法。")
     try:
         return JSONResponse(content=json_safe(service.model_monitoring(
+            partition=pt,
+            force=force,
+            model=model,
+            flag_mob_type=flag_mob_type,
+            flag_product=flag_product,
+            cash_ser_call_node=cash_ser_call_node,
+        )))
+    except Exception as exc:
+        raise handle_error(exc) from exc
+
+
+@app.get("/api/model-monitoring/score")
+def model_score_monitoring(
+    model: str = Query(..., min_length=1, max_length=128),
+    alias: str | None = Query(default=None, max_length=64),
+    target: str = Query(default="fpd7", max_length=16),
+    pt: str | None = Query(default=None, max_length=64),
+    force: bool = Query(default=False),
+    flag_mob_type: str | None = Query(default=None, max_length=64),
+    flag_product: str | None = Query(default=None, max_length=64),
+    cash_ser_call_node: str | None = Query(default=None, max_length=64),
+    _user: dict = Depends(require_perm("model")),
+) -> JSONResponse:
+    if model.strip() not in {field for field, _label in MODEL_SCORES}:
+        raise HTTPException(status_code=422, detail="模型分参数不合法。")
+    if target not in TARGET_FIELDS:
+        raise HTTPException(status_code=422, detail="目标变量参数不合法。")
+    try:
+        return JSONResponse(content=json_safe(service.model_score_monitoring(
+            model=model,
+            alias=alias,
+            target=target,
             partition=pt,
             force=force,
             flag_mob_type=flag_mob_type,

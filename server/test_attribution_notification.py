@@ -76,6 +76,31 @@ def test_s3_notifier_uploads_png_and_sends_public_image_url():
     }
 
 
+def test_s3_notifier_uploads_without_sending_thumbnail_message():
+    s3 = _FakeS3()
+    session = _FakeSession(_FakeResponse({"errcode": 0, "errmsg": "ok"}))
+    png_path = next((Path("server/data/notification_reports")).glob("*.png"))
+    notifier = S3PngDingTalkNotifier(
+        bucket="reports",
+        region="eu-west-1",
+        prefix="credit-attribution",
+        webhook_url="https://oapi.dingtalk.com/robot/send?access_token=token",
+        webhook_secret="secret",
+        public_base_url="https://cdn.test/reports",
+        s3_client=s3,
+        session=session,
+    )
+
+    result = notifier.upload(png_path, "20260902")
+
+    assert result == {
+        "object_name": "credit-attribution/credit_attribution_20260902.png",
+        "image_url": "https://cdn.test/reports/credit-attribution/credit_attribution_20260902.png",
+    }
+    assert len(s3.calls) == 1
+    assert session.calls == []
+
+
 def test_s3_notifier_rejects_dingtalk_api_error():
     png_path = next((Path("server/data/notification_reports")).glob("*.png"))
     notifier = S3PngDingTalkNotifier(
@@ -134,12 +159,9 @@ def test_s3_summary_contains_original_image_and_detail_links():
         page_url="http://monitor.test/?page=attribution",
     )
 
-    assert "[3、查看原图](https://cdn.test/report.png)" in message
-    assert "[查看明细](http://monitor.test/?page=attribution)" in message
-    assert "## [3、查看原图](https://cdn.test/report.png)" in message
-    assert "[查看明细](http://monitor.test/?page=attribution)" in message
-    assert message.count("## ") == 1
-    assert ")\u3000\u3000[查看明细]" in message
+    assert "3、[查看原图](https://cdn.test/report.png)　　[查看明细](http://monitor.test/?page=attribution)" in message
+    assert "## [3、查看原图]" not in message
+    assert "![" not in message
 
 
 def test_s3_notifier_from_env_returns_none_until_all_delivery_settings_exist(monkeypatch):
@@ -209,7 +231,9 @@ def test_digest_counts_levels_and_lists_active_hit_and_non_hit_rules():
     assert "人数通过率：" not in message
     assert "1. 高风险预警：当前 Level3 红色规则 0 条" in message
     assert "2. 持续跟踪风险" in message
-    assert "3. " not in message
+    assert "3、[查看原图](http://host/report.png)　　[查看明细](http://host/?page=attribution)" in message
+    assert "![授信归因完整截图]" not in message
+    assert "[打开完整截图]" not in message
     assert "http://host/report.png" in message
 
 

@@ -189,13 +189,19 @@ class FundAttributionService:
         return DISK_CACHE_DIR / f"fund_{safe}.json"
 
     def _load_disk_cache(self, key: str) -> dict[str, Any] | None:
+        """读取落盘结果（作为 serving 层，不按时间过期）。
+
+        资金归结暂无预计算管线，磁盘缓存即快照层：陈旧数据照常返回，
+        generated_at 由前端展示，需要新数据由用户点「刷新归因」（force）触发重算。
+        """
         path = self._disk_cache_path(key)
         if not path.exists():
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if time.time() - float(payload.get("_ts", 0)) < CACHE_SECONDS:
-                return payload.get("result")
+            result = payload.get("result")
+            if isinstance(result, dict) and result.get("summary"):
+                return result
         except Exception:  # noqa: BLE001
             pass
         return None
@@ -312,7 +318,7 @@ class FundAttributionService:
                 result["meta"]["cache_hit"] = True
                 return result
             raise FundAttributionServiceError(
-                f"pt={selected} 尚无缓存结果，请点击「刷新归因」后查看（首次计算约需 1-3 分钟）。"
+                f"pt={selected} 尚无缓存结果，正在自动触发首次计算（约 1-3 分钟），完成后自动展示。"
             )
 
         # force 刷新且已有旧缓存: 立即返回旧数据, 后台线程异步重算(避免用户长时间等待)

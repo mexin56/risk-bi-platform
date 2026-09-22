@@ -181,10 +181,13 @@ def format_markdown(digest: dict[str, Any]) -> str:
 
     report_url = digest.get("report_url")
     page_url = digest.get("page_url")
+    links = []
     if report_url:
-        lines.extend(["", f"![授信归因完整截图]({report_url})", f"[打开完整截图]({report_url})"])
+        links.append(f"[查看原图]({report_url})")
     if page_url:
-        lines.append(f"[打开授信归因页面]({page_url})")
+        links.append(f"[查看明细]({page_url})")
+    if links:
+        lines.extend(["", f"3、{'　　'.join(links)}"])
     return "\n".join(lines)
 
 
@@ -194,12 +197,16 @@ def format_s3_summary_markdown(
     image_url: str,
     page_url: str | None = None,
 ) -> str:
-    """Format the text follow-up sent after the S3 image preview."""
+    """Format the text follow-up with public original-image and detail links."""
     summary = format_markdown({**digest, "report_url": None, "page_url": None})
-    links = [f"## [3、查看原图]({image_url})"]
+    links = []
+    if image_url:
+        links.append(f"[查看原图]({image_url})")
     if page_url:
         links.append(f"[查看明细]({page_url})")
-    return summary + "\n\n" + "　　".join(links)
+    if not links:
+        return summary
+    return summary + "\n\n" + f"3、{'　　'.join(links)}"
 
 
 class DingTalkNotifier:
@@ -279,7 +286,7 @@ class S3PngDingTalkNotifier:
             self.s3_client = boto3.client("s3", region_name=self.region)
         return self.s3_client
 
-    def publish(self, png_path: Path, pt: str) -> dict[str, Any]:
+    def upload(self, png_path: Path, pt: str) -> dict[str, str]:
         normalized_pt = str(pt).strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_pt):
             raise ValueError("非法 pt")
@@ -295,9 +302,14 @@ class S3PngDingTalkNotifier:
                 ExtraArgs={"ContentType": "image/png", "ACL": "public-read"},
             )
         image_url = self._public_url(object_name)
+        return {"object_name": object_name, "image_url": image_url}
+
+    def publish(self, png_path: Path, pt: str) -> dict[str, Any]:
+        """Upload a PNG and send it as a DingTalk image message."""
+        uploaded = self.upload(png_path, pt)
         response = self.session.post(
             self._signed_webhook_url(),
-            json={"msgtype": "image", "image": {"picURL": image_url}},
+            json={"msgtype": "image", "image": {"picURL": uploaded["image_url"]}},
             headers={"Content-Type": "application/json"},
             timeout=self.timeout,
         )
@@ -307,7 +319,7 @@ class S3PngDingTalkNotifier:
             raise RuntimeError(f"钉钉图片消息发送失败: {result}")
         if "success" in result and result["success"] is False:
             raise RuntimeError(f"钉钉图片消息发送失败: {result}")
-        return {"object_name": object_name, "image_url": image_url, "response": result}
+        return {**uploaded, "response": result}
 
     def _public_url(self, object_name: str) -> str:
         if self.public_base_url:
