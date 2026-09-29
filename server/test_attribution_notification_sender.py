@@ -8,6 +8,9 @@ from attribution_notification import (
     attribution_trend_selector,
     trend_ready_expression,
     flatten_scroll_container,
+    fund_content_selector,
+    fund_ready_selector,
+    save_fund_report_png,
     theme_init_script,
     browser_launch_options,
     login_submit_selector,
@@ -78,3 +81,20 @@ def test_screenshot_can_force_teal_theme():
     script = theme_init_script("teal")
     assert "rc-bi-theme" in script
     assert "teal" in script
+
+
+def test_fund_screenshot_targets_the_fund_content_column():
+    assert fund_content_selector() == "[data-testid='fund-attribution-content']"
+    assert fund_ready_selector() == fund_content_selector()
+
+
+def test_fund_report_png_is_named_for_the_fund_prefix(tmp_path: Path):
+    from datetime import datetime, timezone
+
+    path = save_fund_report_png(
+        tmp_path, "20260928", b"png", datetime(2026, 9, 29, 6, 1, 34, tzinfo=timezone.utc)
+    )
+
+    assert path.parent == tmp_path
+    assert path.name == "fund_attribution_20260928_20260929_060134.png"
+    assert path.read_bytes() == b"png"

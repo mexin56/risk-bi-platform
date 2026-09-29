@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -20,8 +21,15 @@ import requests
 
 
 DEFAULT_REPORT_DIR = Path(__file__).resolve().parent / "data" / "notification_reports"
+CREDIT_REPORT_PREFIX = "credit_attribution"
+FUND_REPORT_PREFIX = "fund_attribution"
+CREDIT_TITLE = "授信归因日报"
+FUND_TITLE = "资金归集日报"
 REPORT_FILENAME_RE = re.compile(
     r"^credit_attribution_[A-Za-z0-9_-]+_\d{8}_\d{6}(?:_\d+)?\.png$"
+)
+FUND_REPORT_FILENAME_RE = re.compile(
+    r"^fund_attribution_[A-Za-z0-9_-]+_\d{8}_\d{6}(?:_\d+)?\.png$"
 )
 
 
@@ -42,107 +50,93 @@ def _compact_rule(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_risk_points(
-    payload: dict[str, Any],
-    level_counts: dict[str, int],
-    active_hits: list[dict[str, Any]],
-    active_misses: list[dict[str, Any]],
-) -> list[str]:
-    summary = payload.get("summary") or {}
-    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
-    focus = payload.get("highlight") if isinstance(payload.get("highlight"), dict) else None
-    if focus is None and alerts:
-        focus = max(
-            alerts,
-            key=lambda item: (
-                int(item.get("level", 0) or 0),
-                float(item.get("z_score", 0) or 0),
-            ),
-        )
-
-    level3 = level_counts["3"]
-    if focus and int(focus.get("level", 0) or 0) >= 3:
-        windows = "、".join(str(value) for value in (focus.get("hit_windows") or [])) or "当前窗口"
-        growth = float(focus.get("growth_factor", 0) or 0)
-        z_score = float(focus.get("z_score", 0) or 0)
-        point1 = (
-            f"高风险预警：当前 Level3 红色规则 {level3} 条；重点路径 **{focus.get('path') or '未命名规则'}** "
-            f"在 {focus.get('primary_window_label') or '观察窗口'} 命中 {windows}，增长 {growth:.2f} 倍、z-score {z_score:.2f}，请优先核查。"
-        )
-    else:
-        point1 = f"高风险预警：当前 Level3 红色规则 {level3} 条，暂未发现需要优先升级的 Level3 重点路径。"
-
-    level23 = level_counts["2"] + level_counts["3"]
-    total = max(1, int(summary.get("merged_alert_count", len(alerts)) or 0))
-    share = level23 / total * 100
-    change = float(summary.get("latest_day_change_pct", 0) or 0)
-    point2 = (
-        f"趋势与结构风险：Level2+Level3 共 {level23} 条，占全部预警 {share:.2f}%；"
-        f"最新日申请量较前一日 {'增长' if change >= 0 else '下降'} {abs(change):.2f}%，建议重点排查集中来源和连续命中窗口。"
-    )
-
-    if active_hits or active_misses:
-        hit_names = "、".join(item["path"] for item in active_hits[:2]) or "无"
-        miss_names = "、".join(item["path"] for item in active_misses[:2]) or "无"
-        point3 = (
-            f"持续跟踪风险：当前仍命中的打标规则 {len(active_hits)} 条（{hit_names}），"
-            f"本日未命中，仍在持续跟踪 {len(active_misses)} 条（{miss_names}），请持续关注后续 pt。"
-        )
-    else:
-        point3 = (
-            f"通过率风险：最新日件数通过率 {_fmt_pct(summary.get('latest_approval_rate'))}，"
-            f"人数通过率 {_fmt_pct(summary.get('latest_cid_approval_rate_pct'))}；请关注两项指标与异常规则是否同步变化。"
-        )
-    tracked_hit_names = "\u3001".join(item["path"] for item in active_hits[:2]) or "\u65e0"
-    tracked_miss_names = "\u3001".join(item["path"] for item in active_misses[:2]) or "\u65e0"
-    point3 = (
-        f"\u6301\u7eed\u8ddf\u8e2a\u98ce\u9669\uff1a\u5f53\u524d\u4ecd\u547d\u4e2d\u7684\u6253\u6807\u89c4\u5219 {len(active_hits)} \u6761\uff08{tracked_hit_names}\uff09\uff0c"
-        f"\u672c\u65e5\u672a\u547d\u4e2d\uff0c\u4ecd\u5728\u6301\u7eed\u8ddf\u8e2a {len(active_misses)} \u6761\uff08{tracked_miss_names}\uff09\uff0c\u8bf7\u6301\u7eed\u5173\u6ce8\u540e\u7eed pt\u3002"
-    )
-    return [point1, point3]
-
-
-def _build_level3_risk_points(
-    payload: dict[str, Any],
-    level_counts: dict[str, int],
-) -> list[str]:
-    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
-    highlight = payload.get("highlight")
-    if not isinstance(highlight, dict) or int(highlight.get("level", 0) or 0) < 3:
-        l3_alerts = [item for item in alerts if int(item.get("level", 0) or 0) >= 3]
-        highlight = max(
-            l3_alerts,
-            key=lambda item: float(item.get("z_score", 0) or 0),
-            default=None,
-        )
-    path = (highlight or {}).get("path") if isinstance(highlight, dict) else None
-    return [f"重点路径：{path or '当前无 Level3 重点路径'}\n请优先核查"]
-
-
-def build_digest(
-    payload: dict[str, Any],
-    *,
-    report_url: str | None = None,
-    page_url: str | None = None,
-) -> dict[str, Any]:
-    meta = payload.get("meta") or {}
-    summary = payload.get("summary") or {}
-    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
-    level_counts = {
-        "1": int(summary.get("level1_count", 0) or 0),
-        "2": int(summary.get("level2_count", 0) or 0),
-        "3": int(summary.get("level3_count", 0) or 0),
-    }
+def _split_tracked_rules(
+    alerts: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split tagged rules (status 1/2) into still-hit and tracked-but-unhit buckets."""
     tracked = [item for item in alerts if int(item.get("status", 0) or 0) in (1, 2)]
     active_hits = [_compact_rule(item) for item in tracked if not item.get("is_tracked_only")]
     active_misses = [_compact_rule(item) for item in tracked if item.get("is_tracked_only")]
     active_hits.sort(key=lambda item: (-int(item["level"]), str(item["path"])))
     active_misses.sort(key=lambda item: str(item["path"]))
-    digest = {
+    return active_hits, active_misses
+
+
+def _focus_alert(payload: dict[str, Any], *, min_level: int) -> dict[str, Any] | None:
+    """Return the red-level path that should be reviewed first, if any."""
+    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
+    highlight = payload.get("highlight")
+    if isinstance(highlight, dict) and int(highlight.get("level", 0) or 0) >= min_level:
+        return highlight
+    candidates = [item for item in alerts if int(item.get("level", 0) or 0) >= min_level]
+    return max(
+        candidates,
+        key=lambda item: (
+            int(item.get("level", 0) or 0),
+            float(item.get("z_score", 0) or 0),
+        ),
+        default=None,
+    )
+
+
+def _high_risk_point(
+    payload: dict[str, Any],
+    *,
+    red_count: int,
+    red_label: str,
+    red_min_level: int,
+) -> str:
+    """First daily point: red-rule count plus the focus path needing a manual review."""
+    focus = _focus_alert(payload, min_level=red_min_level)
+    if focus is None:
+        return (
+            f"高风险预警：当前 {red_label} 红色规则 {red_count} 条，"
+            f"暂未发现需要优先升级的 {red_label} 重点路径。"
+        )
+    windows = "、".join(str(value) for value in (focus.get("hit_windows") or [])) or "当前窗口"
+    growth = float(focus.get("growth_factor", 0) or 0)
+    z_score = float(focus.get("z_score", 0) or 0)
+    return (
+        f"高风险预警：当前 {red_label} 红色规则 {red_count} 条；"
+        f"重点路径 **{focus.get('path') or '未命名规则'}** "
+        f"在 {focus.get('primary_window_label') or '观察窗口'} 命中 {windows}，"
+        f"增长 {growth:.2f} 倍、z-score {z_score:.2f}，请优先核查。"
+    )
+
+
+def _tracking_point(
+    active_hits: list[dict[str, Any]],
+    active_misses: list[dict[str, Any]],
+) -> str:
+    """Second daily point: tagged rules still hit, and tagged rules no longer hit today."""
+    hit_names = "、".join(item["path"] for item in active_hits[:2]) or "无"
+    miss_names = "、".join(item["path"] for item in active_misses[:2]) or "无"
+    return (
+        f"持续跟踪风险：当前仍命中的打标规则 {len(active_hits)} 条（{hit_names}），"
+        f"本日未命中，仍在持续跟踪 {len(active_misses)} 条（{miss_names}），请持续关注后续 pt。"
+    )
+
+
+def _base_digest(
+    payload: dict[str, Any],
+    *,
+    report_url: str | None,
+    page_url: str | None,
+) -> dict[str, Any]:
+    """Shared summary/rule bookkeeping for both daily DingTalk reports."""
+    meta = payload.get("meta") or {}
+    summary = payload.get("summary") or {}
+    alerts = [item for item in (payload.get("merged_alerts") or []) if isinstance(item, dict)]
+    active_hits, active_misses = _split_tracked_rules(alerts)
+    return {
         "partition": str(meta.get("partition") or "未知 pt"),
         "generated_at": str(meta.get("generated_at") or ""),
         "alert_total": int(summary.get("merged_alert_count", len(alerts)) or 0),
-        "level_counts": level_counts,
+        "level_counts": {
+            "1": int(summary.get("level1_count", 0) or 0),
+            "2": int(summary.get("level2_count", 0) or 0),
+            "3": int(summary.get("level3_count", 0) or 0),
+        },
         "latest_application_count": int(summary.get("latest_application_count", 0) or 0),
         "latest_approval_rate": summary.get("latest_approval_rate"),
         "latest_cid_approval_rate_pct": summary.get("latest_cid_approval_rate_pct"),
@@ -151,8 +145,77 @@ def build_digest(
         "report_url": report_url,
         "page_url": page_url,
     }
-    digest["risk_points"] = _build_risk_points(payload, level_counts, active_hits, active_misses)
+
+
+def build_digest(
+    payload: dict[str, Any],
+    *,
+    report_url: str | None = None,
+    page_url: str | None = None,
+) -> dict[str, Any]:
+    """Credit-attribution digest: Level3 red rules plus tagged-rule tracking."""
+    digest = _base_digest(payload, report_url=report_url, page_url=page_url)
+    digest["risk_points"] = [
+        _high_risk_point(
+            payload,
+            red_count=digest["level_counts"]["3"],
+            red_label="Level3",
+            red_min_level=3,
+        ),
+        _tracking_point(digest["active_hits"], digest["active_misses"]),
+    ]
     return digest
+
+
+def build_fund_digest(
+    payload: dict[str, Any],
+    *,
+    report_url: str | None = None,
+    page_url: str | None = None,
+) -> dict[str, Any]:
+    """Fund-pooling digest; same layout as the credit daily report, no extra KPI blocks."""
+    digest = _base_digest(payload, report_url=report_url, page_url=page_url)
+    digest["risk_points"] = [
+        _high_risk_point(
+            payload,
+            red_count=digest["level_counts"]["2"] + digest["level_counts"]["3"],
+            red_label="Level2+3",
+            red_min_level=2,
+        ),
+        _tracking_point(digest["active_hits"], digest["active_misses"]),
+    ]
+    return digest
+
+
+def attach_tracked_only_rules(
+    payload: dict[str, Any],
+    active_tracked_rules: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Add tagged-but-unhit rules to a payload that does not ship them in the snapshot."""
+    result = copy.deepcopy(payload)
+    alerts = list(result.get("merged_alerts") or [])
+    seen = {str(item.get("canonical_path")) for item in alerts if isinstance(item, dict)}
+    extras: list[dict[str, Any]] = []
+    for canonical_path, entry in (active_tracked_rules or {}).items():
+        if str(canonical_path) in seen:
+            continue
+        rule = entry.get("rule") if isinstance(entry.get("rule"), dict) else {}
+        extras.append(
+            {
+                "path": str(rule.get("path") or canonical_path),
+                "canonical_path": str(canonical_path),
+                "level": 0,
+                "level_label": "未命中",
+                "status": int(entry.get("status", 0) or 0),
+                "tracking_start_pt": entry.get("entered_pt"),
+                "is_tracked_only": True,
+                "hit_windows": [],
+            }
+        )
+    if extras:
+        result["merged_alerts"] = [*alerts, *extras]
+        result["merged_alert_total"] = len(result["merged_alerts"])
+    return result
 
 
 def _fmt_pct(value: Any) -> str:
@@ -164,31 +227,37 @@ def _fmt_pct(value: Any) -> str:
         return str(value)
 
 
-def format_markdown(digest: dict[str, Any]) -> str:
-    counts = digest["level_counts"]
-    lines = [
-        "# 授信归因日报",
-        "",
-        f"数据分区：`{digest['partition']}`",
-        "",
-    ]
-    for index, point in enumerate(digest.get("risk_points") or [], start=1):
-        point_lines = str(point).splitlines()
-        if point_lines:
-            lines.append(f"{index}. {point_lines[0]}")
-            lines.extend(point_lines[1:])
-            lines.append("")
-
-    report_url = digest.get("report_url")
-    page_url = digest.get("page_url")
+def _markdown_links(report_url: str | None, page_url: str | None) -> list[str]:
     links = []
     if report_url:
         links.append(f"[查看原图]({report_url})")
     if page_url:
         links.append(f"[查看明细]({page_url})")
+    return links
+
+
+def _daily_markdown(*, title: str, digest: dict[str, Any]) -> str:
+    """Render the shared daily layout: title, pt, risk points, then the link line."""
+    risk_points = list(digest.get("risk_points") or [])
+    lines = [f"# {title}", "", f"数据分区：`{digest['partition']}`", ""]
+    for index, point in enumerate(risk_points, start=1):
+        point_lines = str(point).splitlines()
+        if point_lines:
+            lines.append(f"{index}. {point_lines[0]}")
+            lines.extend(point_lines[1:])
+        lines.append("")
+    links = _markdown_links(digest.get("report_url"), digest.get("page_url"))
     if links:
-        lines.extend(["", f"3、{'　　'.join(links)}"])
-    return "\n".join(lines)
+        lines.append(f"{len(risk_points) + 1}、{'　　'.join(links)}")
+    return "\n".join(lines).rstrip()
+
+
+def format_markdown(digest: dict[str, Any]) -> str:
+    return _daily_markdown(title=CREDIT_TITLE, digest=digest)
+
+
+def format_fund_markdown(digest: dict[str, Any]) -> str:
+    return _daily_markdown(title=FUND_TITLE, digest=digest)
 
 
 def format_s3_summary_markdown(
@@ -197,22 +266,57 @@ def format_s3_summary_markdown(
     image_url: str,
     page_url: str | None = None,
 ) -> str:
-    """Format the text follow-up with public original-image and detail links."""
-    summary = format_markdown({**digest, "report_url": None, "page_url": None})
-    links = []
-    if image_url:
-        links.append(f"[查看原图]({image_url})")
-    if page_url:
-        links.append(f"[查看明细]({page_url})")
-    if not links:
-        return summary
-    return summary + "\n\n" + f"3、{'　　'.join(links)}"
+    """Text follow-up for the S3 image preview; the body matches the text-only message."""
+    return _daily_markdown(
+        title=CREDIT_TITLE,
+        digest={**digest, "report_url": image_url or None, "page_url": page_url},
+    )
+
+
+def format_s3_fund_summary_markdown(
+    digest: dict[str, Any],
+    *,
+    image_url: str,
+    page_url: str | None = None,
+) -> str:
+    """Fund-pooling counterpart of :func:`format_s3_summary_markdown`."""
+    return _daily_markdown(
+        title=FUND_TITLE,
+        digest={**digest, "report_url": image_url or None, "page_url": page_url},
+    )
+
+
+def dingtalk_credentials_from_env(target_env: str | None = None) -> tuple[str, str, str]:
+    """Resolve isolated DingTalk credentials for the selected deployment group."""
+    selected = (target_env or os.getenv("DINGTALK_TARGET_ENV", "")).strip().lower()
+    if selected not in {"test", "prod"}:
+        raise ValueError("DINGTALK_TARGET_ENV 必须是 test 或 prod")
+    if selected == "test":
+        webhook_url = os.getenv("DINGTALK_TEST_WEBHOOK_URL", "").strip() or os.getenv(
+            "DINGTALK_WEBHOOK_URL", ""
+        ).strip()
+        secret = os.getenv("DINGTALK_TEST_SECRET", "").strip() or os.getenv("DINGTALK_SECRET", "").strip()
+    else:
+        webhook_url = os.getenv("DINGTALK_PROD_WEBHOOK_URL", "").strip()
+        secret = os.getenv("DINGTALK_PROD_SECRET", "").strip()
+    if not webhook_url:
+        raise ValueError(f"DINGTALK_{selected.upper()}_WEBHOOK_URL 未配置")
+    return selected, webhook_url, secret
 
 
 class DingTalkNotifier:
-    def __init__(self, webhook_url: str | None = None, secret: str | None = None) -> None:
-        self.webhook_url = (webhook_url if webhook_url is not None else os.getenv("DINGTALK_WEBHOOK_URL", "")).strip()
-        self.secret = (secret if secret is not None else os.getenv("DINGTALK_SECRET", "")).strip()
+    def __init__(
+        self,
+        webhook_url: str | None = None,
+        secret: str | None = None,
+        target_env: str | None = None,
+    ) -> None:
+        if webhook_url is None:
+            self.target_env, self.webhook_url, self.secret = dingtalk_credentials_from_env(target_env)
+        else:
+            self.target_env = (target_env or os.getenv("DINGTALK_TARGET_ENV", "unknown")).strip().lower()
+            self.webhook_url = webhook_url.strip()
+            self.secret = (secret or "").strip()
 
     def build_signed_url(self, timestamp_ms: int | None = None) -> str:
         if not self.webhook_url:
@@ -252,6 +356,7 @@ class S3PngDingTalkNotifier:
         webhook_url: str,
         webhook_secret: str,
         public_base_url: str | None = None,
+        filename_prefix: str = CREDIT_REPORT_PREFIX,
         s3_client: Any | None = None,
         session: Any | None = None,
         timeout: int = 30,
@@ -259,6 +364,7 @@ class S3PngDingTalkNotifier:
         self.bucket = bucket.strip()
         self.region = region.strip()
         self.prefix = prefix.strip().strip("/")
+        self.filename_prefix = filename_prefix.strip() or CREDIT_REPORT_PREFIX
         self.webhook_url = webhook_url.strip()
         self.webhook_secret = webhook_secret.strip()
         self.public_base_url = (public_base_url or "").strip().rstrip("/")
@@ -293,7 +399,7 @@ class S3PngDingTalkNotifier:
         source = Path(png_path)
         if source.suffix.lower() != ".png" or not source.is_file():
             raise ValueError("PNG 截图文件不存在或格式不正确")
-        filename = f"credit_attribution_{normalized_pt}.png"
+        filename = f"{self.filename_prefix}_{normalized_pt}.png"
         object_name = f"{self.prefix}/{filename}" if self.prefix else filename
         self._get_s3_client().upload_file(
                 str(source),
@@ -354,15 +460,28 @@ class S3PngDingTalkNotifier:
         return result
 
 
-def s3_notifier_from_env() -> S3PngDingTalkNotifier | None:
+def s3_notifier_from_env(
+    *,
+    filename_prefix: str = CREDIT_REPORT_PREFIX,
+    object_prefix: str | None = None,
+) -> S3PngDingTalkNotifier | None:
     """Build the S3 PNG delivery adapter only when its configuration exists."""
+    bucket = os.getenv("DINGTALK_S3_BUCKET", "").strip()
+    if not bucket:
+        return None
+    _target_env, webhook_url, webhook_secret = dingtalk_credentials_from_env()
     settings = {
-        "bucket": os.getenv("DINGTALK_S3_BUCKET", ""),
+        "bucket": bucket,
         "region": os.getenv("DINGTALK_S3_REGION", "eu-west-1"),
-        "prefix": os.getenv("DINGTALK_S3_PREFIX", "credit_attribution"),
-        "webhook_url": os.getenv("DINGTALK_WEBHOOK_URL", ""),
-        "webhook_secret": os.getenv("DINGTALK_SECRET", ""),
+        "prefix": (
+            object_prefix
+            if object_prefix is not None
+            else os.getenv("DINGTALK_S3_PREFIX", CREDIT_REPORT_PREFIX)
+        ),
+        "webhook_url": webhook_url,
+        "webhook_secret": webhook_secret,
         "public_base_url": os.getenv("DINGTALK_S3_PUBLIC_BASE_URL", ""),
+        "filename_prefix": filename_prefix,
     }
     required = ("bucket", "webhook_url")
     if not all(str(settings[name]).strip() for name in required):
@@ -370,8 +489,13 @@ def s3_notifier_from_env() -> S3PngDingTalkNotifier | None:
     return S3PngDingTalkNotifier(**settings)
 
 
-def report_path_is_safe(report_dir: Path, filename: str) -> Path:
-    if not REPORT_FILENAME_RE.fullmatch(str(filename)):
+def report_path_is_safe(
+    report_dir: Path,
+    filename: str,
+    *,
+    pattern: re.Pattern[str] = REPORT_FILENAME_RE,
+) -> Path:
+    if not pattern.fullmatch(str(filename)):
         raise ValueError("非法报告文件名")
     root = Path(report_dir).resolve()
     candidate = (root / filename).resolve()
@@ -380,18 +504,26 @@ def report_path_is_safe(report_dir: Path, filename: str) -> Path:
     return candidate
 
 
+def fund_report_path_is_safe(report_dir: Path, filename: str) -> Path:
+    """Validate a fund-pooling report filename before it is served over HTTP."""
+    return report_path_is_safe(report_dir, filename, pattern=FUND_REPORT_FILENAME_RE)
+
+
 def save_report_png(
     report_dir: Path,
     pt: str,
     content: bytes,
     now: datetime | None = None,
+    *,
+    prefix: str = CREDIT_REPORT_PREFIX,
+    pattern: re.Pattern[str] = REPORT_FILENAME_RE,
 ) -> Path:
     normalized_pt = str(pt).strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_pt):
         raise ValueError("非法 pt")
     moment = now or datetime.now(timezone.utc)
-    filename = f"credit_attribution_{normalized_pt}_{moment.strftime('%Y%m%d_%H%M%S')}.png"
-    target = report_path_is_safe(Path(report_dir), filename)
+    filename = f"{prefix}_{normalized_pt}_{moment.strftime('%Y%m%d_%H%M%S')}.png"
+    target = report_path_is_safe(Path(report_dir), filename, pattern=pattern)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(".png.tmp")
     temporary.write_bytes(content)
@@ -399,11 +531,30 @@ def save_report_png(
     return target
 
 
-def capture_attribution_page(
+def save_fund_report_png(
+    report_dir: Path,
+    pt: str,
+    content: bytes,
+    now: datetime | None = None,
+) -> Path:
+    return save_report_png(
+        report_dir,
+        pt,
+        content,
+        now,
+        prefix=FUND_REPORT_PREFIX,
+        pattern=FUND_REPORT_FILENAME_RE,
+    )
+
+
+def _capture_dashboard_page(
     web_url: str,
     username: str,
     password: str,
     output_path: Path,
+    *,
+    content_selector: str,
+    ready_selector: str,
     timeout_ms: int = 120_000,
 ) -> Path:
     from playwright.sync_api import sync_playwright
@@ -422,15 +573,14 @@ def capture_attribution_page(
                 username_input.fill(username)
                 page.locator(login_password_selector()).fill(password)
                 page.locator(login_submit_selector()).click()
-            page.wait_for_selector(attribution_ready_selector(), state="attached", timeout=timeout_ms)
-            trend = page.locator(attribution_trend_selector())
-            trend.wait_for(state="attached", timeout=timeout_ms)
+            page.wait_for_selector(content_selector, state="attached", timeout=timeout_ms)
+            page.locator(ready_selector).wait_for(state="attached", timeout=timeout_ms)
             page.wait_for_function(
                 trend_ready_expression(),
-                arg=attribution_trend_selector(),
+                arg=ready_selector,
                 timeout=timeout_ms,
             )
-            content = page.locator(attribution_content_selector())
+            content = page.locator(content_selector)
             # The application uses a fixed-height <main> with its own scrollbar.
             # A normal full_page screenshot only captures document.body, so the
             # lower trend chart would otherwise be outside the captured bitmap.
@@ -453,6 +603,44 @@ def capture_attribution_page(
         finally:
             browser.close()
     return output_path
+
+
+def capture_attribution_page(
+    web_url: str,
+    username: str,
+    password: str,
+    output_path: Path,
+    timeout_ms: int = 120_000,
+) -> Path:
+    """Long screenshot of the credit-attribution page, cropped to its content column."""
+    return _capture_dashboard_page(
+        web_url,
+        username,
+        password,
+        output_path,
+        content_selector=attribution_content_selector(),
+        ready_selector=attribution_trend_selector(),
+        timeout_ms=timeout_ms,
+    )
+
+
+def capture_fund_page(
+    web_url: str,
+    username: str,
+    password: str,
+    output_path: Path,
+    timeout_ms: int = 120_000,
+) -> Path:
+    """Long screenshot of the fund-pooling page, cropped to its content column."""
+    return _capture_dashboard_page(
+        web_url,
+        username,
+        password,
+        output_path,
+        content_selector=fund_content_selector(),
+        ready_selector=fund_ready_selector(),
+        timeout_ms=timeout_ms,
+    )
 
 
 def browser_launch_options() -> dict[str, Any]:
@@ -485,6 +673,15 @@ def attribution_content_selector() -> str:
 
 def attribution_trend_selector() -> str:
     return "[data-testid='credit-attribution-trend-chart']"
+
+
+def fund_content_selector() -> str:
+    return "[data-testid='fund-attribution-content']"
+
+
+def fund_ready_selector() -> str:
+    """Fund pages render charts inside the content column, so it doubles as the ready node."""
+    return fund_content_selector()
 
 
 def trend_ready_expression() -> str:

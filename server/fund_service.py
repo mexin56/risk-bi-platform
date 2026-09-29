@@ -248,6 +248,10 @@ class FundAttributionService:
         return None
 
     # ---------- 规则状态 ----------
+    def active_tracked_rules(self) -> dict[str, dict[str, Any]]:
+        """Return tagged rules (status 1/2) that are still under continuous tracking."""
+        return self._status_store.get_active_tagged_rules()
+
     def with_rule_statuses(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = copy.deepcopy(payload)
         statuses = self._status_store.get_all()

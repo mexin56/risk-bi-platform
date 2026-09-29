@@ -1,2 +1,4 @@
 load_from:
-  - python_module: pipeline.dagster_defs
+  - python_module:
+      module_name: pipeline.dagster_defs
+      working_directory: /home/jupyter-wenning/risk-bi-platform/server

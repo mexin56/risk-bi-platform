@@ -30,7 +30,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
-from attribution_notification import DEFAULT_REPORT_DIR, report_path_is_safe
+from attribution_notification import (
+    DEFAULT_REPORT_DIR,
+    fund_report_path_is_safe,
+    report_path_is_safe,
+)
 from fund_service import router as fund_router
 from model_monitoring import (
     CASH_SER_CALL_NODE_OPTIONS,
@@ -255,19 +259,50 @@ class AttributionService:
             endpoint=connection.endpoint,
         )
 
+    def _local_serving_partitions(self) -> list[str]:
+        """Return partitions already published locally by the migration/pipeline."""
+        serving_dir = Path(SERVING_DIR)
+        candidates: set[str] = set()
+        meta_path = serving_dir / "meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                for snapshot in meta.get("snapshots", []):
+                    partition = str(snapshot.get("pt") or "")
+                    if SAFE_PARTITION.fullmatch(partition):
+                        candidates.add(partition)
+            except Exception:
+                pass
+        if not candidates:
+            pattern = re.compile(r"^dashboard_(.+)_\d+\.parquet$")
+            for path in serving_dir.glob("dashboard_*.parquet"):
+                match = pattern.fullmatch(path.name)
+                if match and SAFE_PARTITION.fullmatch(match.group(1)):
+                    candidates.add(match.group(1))
+        return sorted(candidates, reverse=True)
+
     def available_partitions(self) -> list[str]:
         cached = self._partition_cache
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return list(cached[1])
 
-        odps = self._odps()
-        table = odps.get_table(self.table_name.split(".")[-1])
-        partitions: list[str] = []
-        for partition in table.partitions:
-            match = re.search(r"pt='([^']+)'", str(partition))
-            if match:
-                partitions.append(match.group(1))
-        result = sorted(set(partitions), reverse=True)
+        remote_error: Exception | None = None
+        try:
+            odps = self._odps()
+            table = odps.get_table(self.table_name.split(".")[-1])
+            partitions: list[str] = []
+            for partition in table.partitions:
+                match = re.search(r"pt='([^']+)'", str(partition))
+                if match:
+                    partitions.append(match.group(1))
+            result = sorted(set(partitions), reverse=True)
+        except Exception as exc:
+            remote_error = exc
+            result = []
+        if not result:
+            result = self._local_serving_partitions()
+        if not result and remote_error is not None:
+            raise remote_error
         self._partition_cache = (time.time(), result)
         return result
 
@@ -373,15 +408,38 @@ class AttributionService:
         cached = getattr(self, "_model_monitor_partition_cache", None)
         if cached and time.time() - cached[0] < int(os.getenv("MODEL_MONITOR_PARTITION_CACHE_SECONDS", "300")):
             return list(cached[1])
-        table = self._odps().get_table(self.model_monitoring_table_name.split(".")[-1])
-        partitions: list[str] = []
-        for item in table.partitions:
-            match = re.search(r"pt='([^']+)'", str(item))
-            if match:
-                partitions.append(match.group(1))
-        result = sorted(set(partitions), reverse=True)
+
+        remote_error: Exception | None = None
+        try:
+            table = self._odps().get_table(self.model_monitoring_table_name.split(".")[-1])
+            partitions: list[str] = []
+            for item in table.partitions:
+                match = re.search(r"pt='([^']+)'", str(item))
+                if match:
+                    partitions.append(match.group(1))
+            result = sorted(set(partitions), reverse=True)
+        except Exception as exc:
+            remote_error = exc
+            result = []
+        if not result:
+            result = self._local_model_monitoring_partitions()
+        if not result and remote_error is not None:
+            raise remote_error
         self._model_monitor_partition_cache = (time.time(), result)
         return list(result)
+
+    def _local_model_monitoring_partitions(self) -> list[str]:
+        """Return model-monitoring partitions represented by local disk caches."""
+        safe_table = re.sub(r"[^A-Za-z0-9_.-]", "_", self.model_monitoring_table_name)
+        prefix = f"{safe_table}_"
+        candidates: set[str] = set()
+        for path in MODEL_MONITOR_DISK_CACHE_DIR.glob(f"{prefix}*.json"):
+            if not path.name.startswith(prefix):
+                continue
+            partition = path.name[len(prefix) : -len(".json")].split("_", 1)[0]
+            if SAFE_PARTITION.fullmatch(partition):
+                candidates.add(partition)
+        return sorted(candidates, reverse=True)
 
     def model_monitoring_filters(
         self,
@@ -1444,6 +1502,17 @@ app.include_router(fund_router)
 def notification_report(filename: str) -> FileResponse:
     try:
         path = report_path_is_safe(NOTIFICATION_REPORT_DIR, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="报告不存在") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+@app.get("/api/fund-attribution/notification-reports/{filename}")
+def fund_notification_report(filename: str) -> FileResponse:
+    try:
+        path = fund_report_path_is_safe(NOTIFICATION_REPORT_DIR, filename)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="报告不存在") from exc
     if not path.is_file():
