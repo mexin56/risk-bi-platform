@@ -268,7 +268,7 @@ export default function Stability() {
   const matrixHead = ['基准 \\ 当前', ...stabilityBins.map((b) => b.range)];
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* 工具条: 模型切换 + 时间范围 + 操作 */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2.5 flex-wrap">

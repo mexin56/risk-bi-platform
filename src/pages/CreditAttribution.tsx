@@ -1041,7 +1041,7 @@ export default function CreditAttribution() {
   const { meta, rules } = dashboard;
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-4 pb-2" data-testid="credit-attribution-content" ref={contentRef}>
+    <div className="min-w-0 w-full space-y-4 pb-2" data-testid="credit-attribution-content" ref={contentRef}>
       {/* 工具条: 观察区间 / 分区 / 刷新 */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">

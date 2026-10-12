@@ -240,7 +240,7 @@ export default function CreditStrategy() {
   ];
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto pb-2">
+    <div className="min-w-0 w-full space-y-4 pb-2">
       <section className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-white/60 backdrop-blur-xl px-5 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <div className="absolute inset-y-0 left-0 w-1" style={{ background: `linear-gradient(180deg, ${brand}, #76a5ff)` }} />
         <div className="flex items-center justify-between gap-4 flex-wrap">

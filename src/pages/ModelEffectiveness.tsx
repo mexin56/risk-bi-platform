@@ -405,7 +405,7 @@ export default function ModelEffectiveness() {
   };
 
   return (
-    <div className="min-h-full bg-[#f5f7fa] p-4 text-slate-900">
+    <div className="min-h-full min-w-0 w-full bg-[#f5f7fa] text-slate-900">
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_-20px_rgba(15,23,42,0.45)]">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div>

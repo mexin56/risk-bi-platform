@@ -456,7 +456,7 @@ export default function Lifecycle({ stage }: { stage: StageKey }) {
   const active = STAGES.find((s) => s.key === stage)!;
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* 面包屑 + 当前环节提示 */}
       <AnimatePresence mode="wait">
         <motion.div

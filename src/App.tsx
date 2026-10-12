@@ -478,7 +478,7 @@ export default function App() {
               style={{ background: 'radial-gradient(circle at center, rgba(255,176,32,0.10), transparent 62%)', filter: 'blur(48px)' }}
             />
           </div>
-          <div className="relative">
+          <div className="relative p-4">
           <AnimatePresence mode="wait">
             <motion.div
               key={page}

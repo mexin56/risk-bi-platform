@@ -115,7 +115,7 @@ export default function Vintage() {
   );
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* Vintage 热力表 */}
       <ChartCard
         title={`Vintage 账龄表 · ${metric}+ 逾期率`}

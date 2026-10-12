@@ -349,7 +349,7 @@ export default function UsersPage({ currentUser }: { currentUser: AuthUser }) {
     }`;
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* ===== 头部 ===== */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2.5">

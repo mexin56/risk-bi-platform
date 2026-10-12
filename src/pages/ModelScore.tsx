@@ -146,7 +146,7 @@ export default function ModelScore() {
   ];
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* 模型清单 */}
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {modelList.map((m) => (

@@ -100,7 +100,7 @@ export default function Channel() {
   ];
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       {/* 四象限 + 趋势 */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <ChartCard title="渠道质量四象限" subtitle="横轴通过率 / 纵轴首逾(倒置) · 气泡=进件量 · 右下为优质区">

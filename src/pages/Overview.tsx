@@ -303,7 +303,7 @@ export default function Overview() {
   ];
 
   return (
-    <div className="space-y-4 max-w-[1440px] mx-auto">
+    <div className="min-w-0 w-full space-y-4">
       <AlertTickerBar />
 
       {/* KPI 卡片 */}

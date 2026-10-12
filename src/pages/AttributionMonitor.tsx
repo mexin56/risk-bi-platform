@@ -52,7 +52,7 @@ export default function AttributionMonitor({ user }: { user: AuthUser }) {
   }
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-3 pb-2" data-testid="attribution-monitor-content">
+    <div className="min-w-0 w-full space-y-3 pb-2" data-testid="attribution-monitor-content">
       <div role="tablist" aria-label="归因监控类型" className="flex items-center gap-1 border-b border-slate-200/80">
         {tabs.map((tab) => {
           const active = tab === activeTab;
