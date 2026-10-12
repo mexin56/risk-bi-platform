@@ -42,19 +42,25 @@ export function bars(labels: string[], series: ChartSeries[], unit: 'percent' | 
       emphasis: { focus: 'series' } })) };
 }
 
-export function shareHeatmap(periods: string[], labels: string[], matrix: Array<Array<number | null>>, metricLabel: string, counts?: number[][]): EChartsOption {
+export function shareHeatmap(periods: string[], labels: string[], matrix: Array<Array<number | null>>, metricLabel: string, counts?: number[][], scale: 'zero' | 'observed' = 'zero'): EChartsOption {
   const cells = matrix.flatMap((values, x) => values.flatMap((value, y) => value == null ? [] : [[x, y, value, counts?.[x]?.[y] ?? -1]]));
-  const max = Math.max(1, ...cells.map(cell => cell[2]));
+  const values = cells.map(cell => cell[2]);
+  const observed = scale === 'observed';
+  const min = observed && values.length ? Math.max(0, Math.floor(Math.min(...values) * 10) / 10) : 0;
+  const max = observed ? Math.max(min + 0.1, Math.ceil(Math.max(0, ...values) * 10) / 10) : Math.max(1, ...values);
   return { ...common(), grid: { left: 14, right: 20, top: 16, bottom: 72, containLabel: true }, legend: { show: false },
     xAxis: categoryAxis(periods.map(dateLabel)), yAxis: { ...categoryAxis(labels), type: 'category', splitArea: { show: true, areaStyle: { color: ['#f8fafc', '#ffffff'] } } },
-    visualMap: { dimension: 2, min: 0, max: +max.toFixed(2), calculable: false, orient: 'horizontal', left: 'center', bottom: 8, itemHeight: 150, itemWidth: 10,
-      text: [`${max.toFixed(1)}%`, '0%'], textStyle: { color: '#64748b', fontSize: 10 }, inRange: { color: ['#eff6ff', '#bfdbfe', '#60a5fa', '#2563eb', '#1e3a8a'] } },
+    visualMap: { dimension: 2, min, max: +max.toFixed(2), calculable: false, orient: 'horizontal', left: 'center', bottom: 8, itemHeight: 150, itemWidth: 10,
+      text: [`${max.toFixed(1)}%`, `${min.toFixed(1)}%`], textStyle: { color: '#64748b', fontSize: 10 },
+      inRange: { color: observed ? ['#f1f7fd', '#dcecfb', '#bedbf5', '#9bc6ec', '#77b1e3'] : ['#eff6ff', '#bfdbfe', '#60a5fa', '#2563eb', '#1e3a8a'] } },
     tooltip: { trigger: 'item', confine: true, renderMode: 'richText', formatter: (params: unknown) => {
       const cell = (params as { data: number[] }).data;
       return `${periods[cell[0]]} · ${labels[cell[1]]}\n${metricLabel}：${cell[2].toFixed(2)}%${cell[3] >= 0 ? `\n样本量：${COUNTS.format(cell[3])}` : ''}`;
     } },
-    series: [{ type: 'heatmap', data: cells, label: { show: periods.length <= 7, fontSize: 10, formatter: (params: unknown) => `${(params as { data: number[] }).data[2].toFixed(1)}%` },
-      itemStyle: { borderWidth: 2, borderColor: '#ffffff' }, emphasis: { itemStyle: { borderColor: '#334155' } } }],
+    series: [{ type: 'heatmap', data: cells, label: { show: observed || periods.length <= 7, color: observed ? '#1e3a5f' : undefined,
+      fontFamily: observed ? 'ui-monospace, monospace' : undefined, fontSize: 10, formatter: (params: unknown) => `${(params as { data: number[] }).data[2].toFixed(1)}%` },
+      labelLayout: { hideOverlap: true },
+      itemStyle: { borderWidth: 2, borderColor: '#ffffff' }, emphasis: { label: { show: true }, itemStyle: { borderColor: '#334155' } } }],
   };
 }
 

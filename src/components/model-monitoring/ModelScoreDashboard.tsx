@@ -242,7 +242,7 @@ function CohortCharts({ periods, current, baseline, groups, grain, models, alias
   return <div className="grid gap-4 xl:grid-cols-2">
     <Panel title="客群规模与多模型覆盖趋势" subtitle={`${context} · 各模型有效分数客户量，人数差异可能来自覆盖差异`} option={lineChart(periods.map(item => dateLabel(item.period)), compared.map((item, i) => ({ name: item.model.model, color: CHART_COLORS[i], dashed: i > 0, values: periods.map(period => item.periods.find(other => other.period === period.period)?.total ?? null) })), 'count', true)} />
     <Panel title="客群分箱结构变化" subtitle={`${context} · ${groups} 组分箱 · 占比分母为该模型当期有效分数客户量`} option={composition(grouped.map(item => item.period), labels, grouped.map(item => shares(item)))} />
-    <Panel title="分箱占比时间热力图" subtitle={`${context} · 颜色为客户占比，悬停查看客户量`} option={shareHeatmap(grouped.map(item => item.period), labels, grouped.map(item => shares(item)), '客户占比', grouped.map(item => item.counts))} height={350} wide />
+    <Panel title="分箱占比时间热力图" subtitle={`${context} · 浅色占比低、深色占比高 · 色阶按当前窗口范围调整，范围见图例 · 悬停查看占比与客户量`} option={shareHeatmap(grouped.map(item => item.period), labels, grouped.map(item => shares(item)), '客户占比', grouped.map(item => item.counts), 'observed')} height={350} wide />
     <Panel title="当前期与基准期客群分布" subtitle={`当前 ${current.period} / 基准 ${baseline?.period ?? '—'} · ${groups} 组分箱 · 单位：%`} option={bars(labels, [
       { name: `当前 ${current.period}`, values: shares(now) },
       { name: `基准 ${baseline?.period ?? '—'}`, color: '#94a3b8', values: shares(before) },
