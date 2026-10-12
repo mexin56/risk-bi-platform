@@ -197,7 +197,7 @@ function StabilityCharts({ rows, weeks, current, baseline, models, target, alias
   const selectedBins = [1, 3, 5, 8, 10];
   const subtitle = `${alias} · ${TARGET_LABELS[target]} · Q1–Q10 按分数升序 · 缺失值不连线`;
   return <div className="grid gap-4 xl:grid-cols-2">
-    <Panel title="分箱坏账率周热力图" subtitle={`${subtitle} · 颜色为坏账率，悬停查看到期样本量`} option={shareHeatmap(weeks, labels, weeks.map(week => valueFor(week, 'badrate')), '坏账率', weeks.map(week => labels.map((_, i) => byKey.get(`${week}|${i + 1}`)?.target_base ?? 0)))} />
+    <Panel title="分箱坏账率周热力图" subtitle={`${alias} · ${TARGET_LABELS[target]} · Q1–Q10 按分数升序 · 浅色坏账率低、深色坏账率高 · 空白表示暂无成熟样本 · 悬停查看到期样本量`} option={shareHeatmap(weeks, labels, weeks.map(week => valueFor(week, 'badrate')), '坏账率', weeks.map(week => labels.map((_, i) => byKey.get(`${week}|${i + 1}`)?.target_base ?? 0)))} />
     <Panel title="代表分箱坏账率周对比" subtitle={`${subtitle} · 展示 Q1 / Q3 / Q5 / Q8 / Q10`} option={bars(weeks.map(dateLabel), selectedBins.map((bin, i) => ({ name: `Q${bin}`, color: CHART_COLORS[i], dashed: i % 2 === 1, values: weeks.map(week => asPercent(byKey.get(`${week}|${bin}`)?.badrate)) })))} />
     <Panel title="分析周与基准周坏账率" subtitle={`${TARGET_LABELS[target]} · 分析周 ${current.period} / 基准 ${baseline?.period ?? '—'} · 分母为各箱到期样本`} option={bars(labels, [
       { name: `当前 ${current.period}`, values: valueFor(current.period, 'badrate') },

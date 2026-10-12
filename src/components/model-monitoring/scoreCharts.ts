@@ -1,10 +1,17 @@
 import type { EChartsOption } from 'echarts';
+import { getBrand } from '@/lib/theme';
 import { COUNTS, dateLabel } from './scorePresentation';
 
 export const CHART_COLORS = ['#2563eb', '#b58b27', '#c66d3b', '#708345', '#b06b89'];
 const neutral = '#94a3b8';
 export type ChartSeries = { name: string; values: Array<number | null>; color?: string; dashed?: boolean };
 export const asPercent = (value: number | null | undefined) => value == null ? null : value * 100;
+
+function heatmapColors(brand: string): string[] {
+  const channels = [1, 3, 5].map(start => parseInt(brand.slice(start, start + 2), 16));
+  return [0.06, 0.18, 0.32, 0.46, 0.58].map(weight =>
+    `#${channels.map(channel => Math.round(255 + (channel - 255) * weight).toString(16).padStart(2, '0')).join('')}`);
+}
 
 const categoryAxis = (labels: string[]) => ({
   type: 'category' as const, data: labels, axisTick: { show: false },
@@ -43,6 +50,7 @@ export function bars(labels: string[], series: ChartSeries[], unit: 'percent' | 
 }
 
 export function shareHeatmap(periods: string[], labels: string[], matrix: Array<Array<number | null>>, metricLabel: string, counts?: number[][], scale: 'zero' | 'observed' = 'zero'): EChartsOption {
+  const brand = getBrand();
   const cells = matrix.flatMap((values, x) => values.flatMap((value, y) => value == null ? [] : [[x, y, value, counts?.[x]?.[y] ?? -1]]));
   const values = cells.map(cell => cell[2]);
   const observed = scale === 'observed';
@@ -52,15 +60,15 @@ export function shareHeatmap(periods: string[], labels: string[], matrix: Array<
     xAxis: categoryAxis(periods.map(dateLabel)), yAxis: { ...categoryAxis(labels), type: 'category', splitArea: { show: true, areaStyle: { color: ['#f8fafc', '#ffffff'] } } },
     visualMap: { dimension: 2, min, max: +max.toFixed(2), calculable: false, orient: 'horizontal', left: 'center', bottom: 8, itemHeight: 150, itemWidth: 10,
       text: [`${max.toFixed(1)}%`, `${min.toFixed(1)}%`], textStyle: { color: '#64748b', fontSize: 10 },
-      inRange: { color: observed ? ['#f1f7fd', '#dcecfb', '#bedbf5', '#9bc6ec', '#77b1e3'] : ['#eff6ff', '#bfdbfe', '#60a5fa', '#2563eb', '#1e3a8a'] } },
-    tooltip: { trigger: 'item', confine: true, renderMode: 'richText', formatter: (params: unknown) => {
+      inRange: { color: heatmapColors(brand) } },
+    tooltip: { trigger: 'item', confine: true, renderMode: 'richText', backgroundColor: '#ffffff', borderColor: '#e2e8f0', textStyle: { color: '#334155', fontSize: 12 }, formatter: (params: unknown) => {
       const cell = (params as { data: number[] }).data;
       return `${periods[cell[0]]} · ${labels[cell[1]]}\n${metricLabel}：${cell[2].toFixed(2)}%${cell[3] >= 0 ? `\n样本量：${COUNTS.format(cell[3])}` : ''}`;
     } },
-    series: [{ type: 'heatmap', data: cells, label: { show: observed || periods.length <= 7, color: observed ? '#1e3a5f' : undefined,
-      fontFamily: observed ? 'ui-monospace, monospace' : undefined, fontSize: 10, formatter: (params: unknown) => `${(params as { data: number[] }).data[2].toFixed(1)}%` },
+    series: [{ type: 'heatmap', data: cells, label: { show: true, color: '#334155',
+      fontFamily: 'ui-monospace, monospace', fontSize: 10, formatter: (params: unknown) => `${(params as { data: number[] }).data[2].toFixed(1)}%` },
       labelLayout: { hideOverlap: true },
-      itemStyle: { borderWidth: 2, borderColor: '#ffffff' }, emphasis: { label: { show: true }, itemStyle: { borderColor: '#334155' } } }],
+      itemStyle: { borderWidth: 2, borderColor: '#ffffff' }, emphasis: { label: { show: true }, itemStyle: { borderColor: brand } } }],
   };
 }
 
