@@ -10,7 +10,7 @@ export const dateLabel = (day: string) => day.slice(5).replace('-', '/');
 export const ratio = (value: number, total: number) => total > 0 ? value / total : null;
 
 export type Grain = 'day' | 'week';
-export type WindowDays = 7 | 14 | 30;
+export type WindowDays = 7 | 15;
 export type Distribution = { period: string; counts: number[]; shares: Array<number | null>; total: number; firstDay: string; lastDay: string; days: number };
 export type ScoreModel = { field: string; model: string };
 

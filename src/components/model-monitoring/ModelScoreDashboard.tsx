@@ -86,7 +86,7 @@ function distributionForWeek(rows: ModelScoreStabilityWeekly[], week: string): D
 
 export default function ModelScoreDashboard(props: Props) {
   const { mode, model, alias, target, payload } = props;
-  const [windowDays, setWindowDays] = useState<WindowDays>(30);
+  const [windowDays, setWindowDays] = useState<WindowDays>(15);
   const [grain, setGrain] = useState<Grain>('day');
   const [groups, setGroups] = useState<5 | 10>(10);
   const [analysisWeek, setAnalysisWeek] = useState('');
@@ -152,7 +152,7 @@ export default function ModelScoreDashboard(props: Props) {
           </select></label>}
           {mode === 'cohort' && <>
             <label className="flex items-center gap-1.5 text-xs text-slate-500">范围<select aria-label="客群时间范围" className={controlClass} value={windowDays} onChange={event => setWindowDays(Number(event.target.value) as WindowDays)}>
-              {[7, 14, 30].map(days => <option key={days} value={days}>近 {days} 天</option>)}</select></label>
+              {[7, 15].map(days => <option key={days} value={days}>近 {days} 天</option>)}</select></label>
             <label className="flex items-center gap-1.5 text-xs text-slate-500">粒度<select aria-label="客群时间粒度" className={controlClass} value={grain} onChange={event => setGrain(event.target.value as Grain)}><option value="day">按日</option><option value="week">按周</option></select></label>
             <label className="flex items-center gap-1.5 text-xs text-slate-500">分箱<select aria-label="客群分箱尺度" className={controlClass} value={groups} onChange={event => setGroups(Number(event.target.value) as 5 | 10)}><option value={10}>10 组 · Q1–Q10</option><option value={5}>5 组 · 相邻合并</option></select></label>
           </>}
