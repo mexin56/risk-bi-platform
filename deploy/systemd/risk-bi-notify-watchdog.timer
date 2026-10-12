@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Risk BI DingTalk daily-report gap watchdog at 15:00
+
+[Timer]
+OnCalendar=*-*-* 15:00:00
+# 机器 15:00 时恰好停机/重启，开机后补跑一次，避免整天没人发现日报缺失
+Persistent=true
+AccuracySec=1min
+Unit=risk-bi-notify-watchdog.service
+
+[Install]
+WantedBy=timers.target

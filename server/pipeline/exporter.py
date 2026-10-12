@@ -1,11 +1,4 @@
-"""serving 快照导出:DuckDB 结果 → API 只读的 parquet 文件层。
-
-为什么中间要有一层 parquet:DuckDB 同一文件不允许跨进程"一写一读"。
-API 用 duckdb 内存模式直查这些 parquet,零文件锁冲突;每个文件整体
-写入 .tmp 后 os.replace 原子替换,任何时刻 API 读到的都是完整快照。
-
-单文件量级 ~1MB,pandas/pyarrow 中转足够快(<100ms),不做花哨优化。
-"""
+"""将管线计算结果发布为原子替换的 DuckDB 只读查询快照。"""
 
 from __future__ import annotations
 
@@ -42,61 +35,23 @@ def export_snapshot(
     pt: str,
     offset: int,
 ) -> dict[str, Any]:
-    """从 DuckDB 读取刚写入的 run,导出该 (pt, offset) 的完整 serving 快照。"""
-    serving_dir = Path(serving_dir)
-    serving_dir.mkdir(parents=True, exist_ok=True)
+    """确认完整批次后发布 DuckDB；成功返回后下游可直接查询。"""
+    from pipeline.duckdb_serving import publish_database
 
-    conn = duckdb.connect(str(Path(db_path)), read_only=True)
-    try:
-        payload_row = conn.execute(
-            "SELECT payload FROM attr_payloads WHERE run_id = ?", [run_id]
-        ).fetchone()
-        if payload_row is None:
-            raise RuntimeError(f"run_id={run_id} 在 DuckDB 中不存在,无法导出快照")
-
-        dashboard_frame = pd.DataFrame(
-            [
-                {
-                    "pt": pt,
-                    "offset_days": int(offset),
-                    "run_id": run_id,
-                    "exported_at": datetime.now(timezone.utc),
-                    "payload": payload_row[0],
-                }
-            ]
-        )
-        path_frame = conn.execute(
-            """
-            SELECT alert_id, date, application_count, total_application_count,
-                   approval_count, cid_cnt, approval_cid_cnt
-            FROM attr_path_daily WHERE run_id = ?
-            ORDER BY alert_id, date
-            """,
-            [run_id],
-        ).df()
-        partitions_frame = conn.execute(
-            "SELECT pt, min_day, max_day, refreshed_at FROM dim_partitions ORDER BY pt DESC"
-        ).df()
-    finally:
-        conn.close()
-
-    paths = snapshot_paths(serving_dir, pt, offset)
-    _write_parquet_atomic(dashboard_frame, paths["dashboard"])
-    _write_parquet_atomic(path_frame, paths["path_daily"])
-    _write_parquet_atomic(partitions_frame, serving_dir / "partitions.parquet")
-
-    info = update_meta_index(
-        serving_dir,
+    target = publish_database(db_path, serving_dir, run_id=run_id)
+    from pipeline.business_results import publish_system_database
+    business_target = publish_system_database(Path(serving_dir))
+    return update_meta_index(
+        Path(serving_dir),
         entry={
             "pt": pt,
             "offset": int(offset),
             "run_id": run_id,
             "published_at": datetime.now(timezone.utc).isoformat(),
-            "dashboard_file": paths["dashboard"].name,
-            "path_daily_file": paths["path_daily"].name,
+            "duckdb_file": target.name,
+            "business_database": str(business_target),
         },
     )
-    return info
 
 
 def update_meta_index(serving_dir: Path, *, entry: dict[str, Any]) -> dict[str, Any]:

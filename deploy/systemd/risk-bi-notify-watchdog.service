@@ -1,0 +1,22 @@
+# Risk BI 日报缺口巡检
+#
+# 每天 15:00 查一次授信归因 / 资金归集的钉钉发送台账：
+# 最近成功发送的 pt 落后于"昨天"就直接往群里发一条告警。
+# 这样"日报没发"不需要靠人工去群里发现。
+[Unit]
+Description=Risk BI DingTalk daily-report gap watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=jupyter-wenning
+Group=jupyter-wenning
+WorkingDirectory=/home/jupyter-wenning/risk-bi-platform/server
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/jupyter-wenning/risk-bi-platform/.venv/bin/python /home/jupyter-wenning/risk-bi-platform/server/scripts/notify_watchdog.py
+# 告警本身发不出去时必须留下痕迹
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Risk BI Platform API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jupyter-wenning
+Group=jupyter-wenning
+WorkingDirectory=/home/jupyter-wenning/risk-bi-platform/server
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/jupyter-wenning/risk-bi-platform/server/.env.local
+ExecStart=/home/jupyter-wenning/risk-bi-platform/.venv/bin/python /home/jupyter-wenning/risk-bi-platform/server/app.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

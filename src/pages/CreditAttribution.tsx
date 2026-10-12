@@ -8,12 +8,14 @@ import {
   Check,
   ChevronRight,
   Database,
+  Filter,
   Link2,
   LoaderCircle,
   RefreshCw,
   SearchCheck,
   ShieldAlert,
   Sparkles,
+  X,
 } from 'lucide-react';
 import ChartCard from '@/components/ChartCard';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
@@ -87,9 +89,32 @@ function formatDate(value: string | null | undefined) {
   return value.slice(5).replace('-', '/');
 }
 
-/** 分享链接白名单参数键 */
-const SHARE_KEYS = ['pt', 'offset', 'path', 'range', 'lv', 'src', 'type', 'win', 'dim'] as const;
+/** 分享链接白名单参数键；dim.<field>=<value> 用于还原维度筛选 */
+const SHARE_KEYS = ['pt', 'offset', 'path', 'range', 'lv', 'src', 'type', 'win', 'dim', 'dims'] as const;
 type ShareParams = Partial<Record<(typeof SHARE_KEYS)[number], string>>;
+
+/** 从 dim.<field>=<value> 还原维度筛选(多个用逗号分隔) */
+function readDimensionFilters(params: ShareParams): Record<string, string> {
+  const raw = params.dims;
+  if (!raw) return {};
+  const result: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const index = pair.indexOf('=');
+    if (index <= 0) continue;
+    const field = pair.slice(0, index);
+    const value = pair.slice(index + 1);
+    if (field && value) result[field] = value;
+  }
+  return result;
+}
+
+/** 维度筛选序列化成分享参数 */
+function serializeDimensionFilters(filters: Record<string, string>): string {
+  return Object.entries(filters)
+    .filter(([, value]) => value)
+    .map(([field, value]) => `${field}=${value}`)
+    .join(',');
+}
 
 /** 从 URL 读取分享参数(仅取白名单键) */
 function readShareParams(): ShareParams {
@@ -415,6 +440,10 @@ export default function CreditAttribution() {
   const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
   const [statusHistoryError, setStatusHistoryError] = useState<string | null>(null);
   const [dimFilter, setDimFilter] = useState<string>(share.dim ?? 'all'); // 下钻层级: 单维/二级/三级
+  // 维度取值筛选: { 维度字段: 取值 }，例如 { flag_mob_type: '现金贷-新客' }
+  // 维度清单不在前端硬编码，改为从当前分区的 conditions 里推导，配置里新增维度就自动出现筛选器
+  const [dimensionFilters, setDimensionFilters] = useState<Record<string, string>>(() => readDimensionFilters(share));
+  const [dimensionPanelOpen, setDimensionPanelOpen] = useState(false);
   const [daysBack, setDaysBack] = useState(() => {
     const value = Number(share.offset ?? 0);
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -634,8 +663,58 @@ export default function CreditAttribution() {
     return rows;
   }, [dashboard]);
 
+  // 维度筛选器清单: 从当前分区的路径条件里推导(label 来自后端 field_labels)
+  // 这样 attribution_config.json 里新增一个维度(如客户类型)，筛选器无需改前端就会自动出现
+  const dimensionOptions = useMemo(() => {
+    const labels = new Map<string, string>();
+    const values = new Map<string, Set<string>>();
+    for (const record of allRows) {
+      for (const condition of record.conditions) {
+        labels.set(condition.field, condition.label || condition.field);
+        if (!values.has(condition.field)) values.set(condition.field, new Set<string>());
+        values.get(condition.field)!.add(condition.value);
+      }
+    }
+    return Array.from(values.entries())
+      .map(([field, set]) => ({
+        field,
+        label: labels.get(field) ?? field,
+        values: Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+  }, [allRows]);
+
+  const activeDimensionEntries = useMemo(
+    () => Object.entries(dimensionFilters).filter(([, value]) => value),
+    [dimensionFilters],
+  );
+
+  // 切换分区后，之前选的取值可能在新分区里已不存在 → 清理掉，避免筛选器显示空值
+  useEffect(() => {
+    setDimensionFilters((current) => {
+      const allowed = new Map(dimensionOptions.map((item) => [item.field, new Set(item.values)]));
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const [field, value] of Object.entries(current)) {
+        if (allowed.get(field)?.has(value)) next[field] = value;
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [dimensionOptions]);
+
+  const setDimensionValue = useCallback((field: string, value: string) => {
+    setDimensionFilters((current) => {
+      const next = { ...current };
+      if (value) next[field] = value;
+      else delete next[field];
+      return next;
+    });
+  }, []);
+
   const filteredAlerts = useMemo(() => {
     if (ruleStatusTab === 'history') return [];
+    const activeFilters = Object.entries(dimensionFilters).filter(([, value]) => value);
     return allRows.filter((record) => {
       // Discovery always shows the current pt's abnormal rows, regardless of
       // whether the same rule is already marked as strategy/observation.
@@ -650,9 +729,14 @@ export default function CreditAttribution() {
       const typeMatched = typeFilter === 'all' || record.anomaly_type === typeFilter;
       const windowMatched = windowFilter === 'all' || record.primary_window === windowFilter;
       const dimMatched = dimFilter === 'all' || record.layer === dimFilter;
-      return statusMatched && levelMatched && sourceMatched && typeMatched && windowMatched && dimMatched;
+      // 维度筛选口径: 只保留"路径条件里显式包含该维度取值"的路径(多维度之间是 AND)
+      const dimensionMatched = activeFilters.every(([field, value]) => record.conditions.some(
+        (condition) => condition.field === field && condition.value === value,
+      ));
+      return statusMatched && levelMatched && sourceMatched && typeMatched && windowMatched
+        && dimMatched && dimensionMatched;
     });
-  }, [allRows, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter, ruleStatusTab]);
+  }, [allRows, dimensionFilters, levelFilter, sourceFilter, typeFilter, windowFilter, dimFilter, ruleStatusTab]);
 
   const ruleStatusCounts = useMemo(() => {
     return {
@@ -718,8 +802,9 @@ export default function CreditAttribution() {
     assign('type', typeFilter);
     assign('win', windowFilter);
     assign('dim', dimFilter);
+    assign('dims', serializeDimensionFilters(dimensionFilters));
     return url.toString();
-  }, [activeRecord?.id, daysBack, dimFilter, levelFilter, selectedPartition, sourceFilter, trendRange, typeFilter, windowFilter]);
+  }, [activeRecord?.id, daysBack, dimFilter, dimensionFilters, levelFilter, selectedPartition, sourceFilter, trendRange, typeFilter, windowFilter]);
 
   const handleShare = useCallback(async () => {
     const ok = await copyText(buildShareUrl());
@@ -1152,6 +1237,62 @@ export default function CreditAttribution() {
               return <button key={label} onClick={() => setLevelFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${active ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{label}</button>;
             })}
           </div>
+        </div>
+        {/* 维度取值筛选: 维度清单由当前数据的 path conditions 推导，新增维度自动出现 */}
+        <div className="px-4 pb-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDimensionPanelOpen((open) => !open)}
+              aria-expanded={dimensionPanelOpen}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10.5px] ${activeDimensionEntries.length > 0 ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              <Filter size={12} />
+              维度筛选
+              {activeDimensionEntries.length > 0 && <span className="rounded bg-white/20 px-1 text-[10px]">{activeDimensionEntries.length}</span>}
+            </button>
+            {activeDimensionEntries.map(([field, value]) => {
+              const option = dimensionOptions.find((item) => item.field === field);
+              return (
+                <span key={field} className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[10.5px] text-blue-700">
+                  {option?.label ?? field}: {value}
+                  <button type="button" aria-label={`清除${option?.label ?? field}筛选`} onClick={() => setDimensionValue(field, '')}>
+                    <X size={11} />
+                  </button>
+                </span>
+              );
+            })}
+            {dimensionOptions.length === 0 && (
+              <span className="text-[10.5px] text-slate-400">当前分区没有可筛选的维度</span>
+            )}
+          </div>
+          {dimensionPanelOpen && dimensionOptions.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+              {dimensionOptions.map((option) => (
+                <label key={option.field} className="text-[11px] font-medium text-slate-600">
+                  {option.label}
+                  <select
+                    value={dimensionFilters[option.field] ?? ''}
+                    onChange={(event) => setDimensionValue(option.field, event.target.value)}
+                    className="theme-select ml-1"
+                    aria-label={`按${option.label}筛选`}
+                  >
+                    <option value="">全部</option>
+                    {option.values.map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+              ))}
+              {activeDimensionEntries.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDimensionFilters({})}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[10.5px] text-slate-600 hover:bg-slate-50"
+                >
+                  清空维度筛选
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} />
         </>

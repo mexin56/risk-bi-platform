@@ -1,12 +1,9 @@
-"""serving 快照读取与响应装配(API 进程唯一使用的模块)。
-
-只读 parquet(duckdb 内存模式),不触碰 attribution.duckdb,
-与 pipeline 写进程零锁冲突。所有函数均为纯读取 + 纯计算。
-"""
+"""API 从已发布的 DuckDB 读取结果，与管线写入库隔离。"""
 
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -14,58 +11,105 @@ import duckdb
 import pandas as pd
 
 
-def _query_parquet(sql: str) -> pd.DataFrame:
-    """duckdb 内存模式直查;连接用完即弃。"""
-    conn = duckdb.connect(":memory:")
+from pipeline.business_results import connect_results, result_prefix, snapshot_version, system_database_path
+
+
+@lru_cache(maxsize=128)
+def _partitions_cached(path: str, prefix: str, offset: int | None, version: str) -> tuple[str, ...]:
+    conn = duckdb.connect(path, read_only=True)
     try:
-        return conn.execute(sql).df()
+        sql = f"SELECT DISTINCT pt FROM {prefix}_dashboard"
+        params = []
+        if offset is not None:
+            sql += " WHERE offset_days = ?"
+            params.append(int(offset))
+        return tuple(str(row[0]) for row in conn.execute(sql + " ORDER BY pt DESC", params).fetchall())
     finally:
         conn.close()
 
 
+def published_partitions(serving_dir: Path, offset: int | None = None) -> list[str]:
+    try:
+        version = snapshot_version(serving_dir)
+        if not version:
+            return []
+        return list(_partitions_cached(str(system_database_path(serving_dir)), result_prefix(serving_dir), offset, version))
+    except (FileNotFoundError, duckdb.Error):
+        return []
+
+
 def read_dashboard_snapshot(serving_dir: Path, pt: str, offset: int) -> dict[str, Any] | None:
-    """返回该 (pt, offset) 的完整 dashboard 载荷;不存在返回 None。"""
-    path = Path(serving_dir) / f"dashboard_{pt}_{int(offset)}.parquet"
-    if not path.exists():
-        return None
-    escaped = str(path).replace("'", "''")
+    """直接读取已预先装配的业务看板结果，不在请求中重复计算指标。"""
+    version = snapshot_version(serving_dir)
+    prefix = result_prefix(serving_dir)
     try:
-        frame = _query_parquet(f"SELECT payload FROM read_parquet('{escaped}')")
-    except Exception:
-        return None
-    if frame.empty:
-        return None
-    try:
-        payload = json.loads(frame.iloc[0]["payload"])
+        conn = connect_results(serving_dir)
+        try:
+            row = conn.execute(
+                f"""SELECT payload FROM {prefix}_dashboard
+                WHERE pt = ? AND offset_days = ? ORDER BY generated_at DESC LIMIT 1""",
+                [pt, int(offset)],
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        payload = json.loads(row[0])
         meta = payload.setdefault("meta", {})
-        meta["cache_hit"] = True
-        meta["async_refresh"] = False
-        meta["serving"] = True
+        meta.update(cache_hit=True, async_refresh=False, serving=True,
+                    result_store="duckdb", result_version=version)
         return payload
-    except Exception:
+    except (FileNotFoundError, duckdb.Error, ValueError, TypeError):
+        return None
+
+
+def _path_rows(serving_dir: Path, pt: str, offset: int, alert_id: str | None = None):
+    prefix = result_prefix(serving_dir)
+    conn = connect_results(serving_dir)
+    try:
+        run = conn.execute(
+            f"SELECT run_id FROM {prefix}_dashboard WHERE pt = ? AND offset_days = ? ORDER BY generated_at DESC LIMIT 1",
+            [pt, int(offset)],
+        ).fetchone()
+        if run is None:
+            return None
+        counts = ("abnormal_order_count AS application_count, order_count AS total_application_count"
+                  if prefix == "fund" else "application_count, total_application_count")
+        sql = f"SELECT alert_id, date, {counts}, approval_count, cid_cnt, approval_cid_cnt FROM {prefix}_path_daily WHERE run_id = ?"
+        params = [run[0]]
+        if alert_id is not None:
+            sql += " AND alert_id = ?"
+            params.append(alert_id)
+        result = conn.execute(sql + " ORDER BY alert_id, date", params)
+        columns = [col[0] for col in result.description]
+        return columns, result.fetchall()
+    finally:
+        conn.close()
+
+
+def read_path_daily_rows(serving_dir: Path, pt: str, offset: int, alert_id: str) -> list[dict] | None:
+    try:
+        result = _path_rows(serving_dir, pt, offset, alert_id)
+        if result is None:
+            return None
+        columns, rows = result
+        return [dict(zip(columns, row)) for row in rows]
+    except (FileNotFoundError, duckdb.Error):
         return None
 
 
 def read_path_daily_frame(serving_dir: Path, pt: str, offset: int) -> pd.DataFrame | None:
-    path = Path(serving_dir) / f"path_daily_{pt}_{int(offset)}.parquet"
-    if not path.exists():
-        return None
-    escaped = str(path).replace("'", "''")
     try:
-        frame = _query_parquet(f"SELECT * FROM read_parquet('{escaped}')")
-    except Exception:
+        result = _path_rows(serving_dir, pt, offset)
+        if result is None:
+            return None
+        columns, rows = result
+        frame = pd.DataFrame(rows, columns=columns)
+        if not frame.empty:
+            frame["date"] = pd.to_datetime(frame["date"]).dt.date
+        return frame
+    except (FileNotFoundError, duckdb.Error):
         return None
-    if frame.empty:
-        return frame  # 空 frame 也是合法结果(该快照无路径数据)
-    frame["date"] = pd.to_datetime(frame["date"]).dt.date
-    if "approval_count" not in frame.columns:
-        # 旧快照无通过量列, 降级为缺失
-        frame["approval_count"] = pd.NA
-    if "cid_cnt" not in frame.columns:
-        frame["cid_cnt"] = pd.NA
-    if "approval_cid_cnt" not in frame.columns:
-        frame["approval_cid_cnt"] = pd.NA
-    return frame
 
 
 def path_series_for_alert(
@@ -218,22 +262,26 @@ def enrich_approval_rates(dashboard: dict[str, Any], frame: pd.DataFrame | None)
     return dashboard
 
 
-def read_partition_ranges(serving_dir: Path) -> dict[str, dict[str, str]] | None:
-    """dim_partitions 快照:{pt: {min, max}};文件缺失或损坏返回 None。"""
-    path = Path(serving_dir) / "partitions.parquet"
-    if not path.exists():
-        return None
-    escaped = str(path).replace("'", "''")
+@lru_cache(maxsize=64)
+def _ranges_cached(path: str, prefix: str, version: str) -> tuple:
+    conn = duckdb.connect(path, read_only=True)
     try:
-        frame = _query_parquet(f"SELECT pt, min_day, max_day FROM read_parquet('{escaped}')")
-    except Exception:
+        return tuple(conn.execute(f"""SELECT pt, MIN(table_date_min), MAX(table_date_max)
+            FROM {prefix}_dashboard GROUP BY pt""").fetchall())
+    finally:
+        conn.close()
+
+
+def read_partition_ranges(serving_dir: Path) -> dict[str, dict[str, str]] | None:
+    try:
+        version = snapshot_version(serving_dir)
+        if not version:
+            return None
+        rows = _ranges_cached(str(system_database_path(serving_dir)), result_prefix(serving_dir), version)
+        return {str(pt): {"min": str(lo), "max": str(hi)} for pt, lo, hi in rows if lo and hi} or None
+    except (FileNotFoundError, duckdb.Error):
         return None
-    ranges: dict[str, dict[str, str]] = {}
-    for row in frame.itertuples(index=False):
-        if row.min_day and row.max_day:
-            ranges[str(row.pt)] = {"min": str(row.min_day), "max": str(row.max_day)}
-    return ranges or None
 
 
 def snapshot_exists(serving_dir: Path, pt: str, offset: int) -> bool:
-    return (Path(serving_dir) / f"dashboard_{pt}_{int(offset)}.parquet").exists()
+    return str(pt) in published_partitions(serving_dir, offset)

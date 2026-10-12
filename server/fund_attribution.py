@@ -830,6 +830,45 @@ class FundAttributionRunner:
     def _conditions(record: dict[str, Any]) -> list[tuple[str, str]]:
         return [(part["field"], part["value"]) for part in record["conditions"]]
 
+    def _populate_customer_types(self, records: Sequence[dict[str, Any]]) -> None:
+        """Attach source customer types matching each record's path conditions."""
+        field = "cashloan_cid_mob_type"
+        if field not in self.dimensions:
+            for record in records:
+                record["customer_types"] = []
+            return
+
+        condition_sets: dict[str, dict[str, Any]] = {}
+        for record in records:
+            conditions = self._conditions(record)
+            direct_value = next((value for name, value in conditions if name == field), None)
+            if direct_value is not None:
+                record["customer_types"] = [normalize_value(direct_value)]
+                continue
+            key = record["canonical_path"]
+            condition_sets.setdefault(
+                key,
+                {
+                    "key": key,
+                    "conditions": [{"field": name, "value": value} for name, value in conditions],
+                },
+            )
+
+        customer_types_by_path: dict[str, list[str]] = {}
+        condition_set_list = list(condition_sets.values())
+        for start in range(0, len(condition_set_list), 80):
+            batch = condition_set_list[start:start + 80]
+            grouped = self.grouped_for_condition_sets(batch, field)
+            for key, value_map in grouped.items():
+                customer_types_by_path[key] = sorted(
+                    value
+                    for value, (_, totals) in value_map.items()
+                    if float(totals.sum()) > 0
+                )
+
+        for record in records:
+            record.setdefault("customer_types", customer_types_by_path.get(record["canonical_path"], []))
+
     def run(self) -> dict[str, Any]:
         from datetime import datetime, timezone
 
@@ -1228,6 +1267,17 @@ class FundAttributionRunner:
             "config_summary": metrics.config_summary(),
             "field_dictionary": self._field_dictionary(metrics, single_groups),
         }
+        visible_records = [
+            *payload["merged_alerts"],
+            *payload["top_k"]["single_downstream"],
+            *payload["top_k"]["pair_downstream"],
+            *payload["top_k"]["third_alerts"],
+            *payload["expert"]["single"],
+            *payload["expert"]["pair"],
+            *payload["expert"]["third"],
+            *payload["review_items"],
+        ]
+        self._populate_customer_types(visible_records)
         return payload
 
     # ------------------------------------------------------------------

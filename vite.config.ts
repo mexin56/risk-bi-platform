@@ -9,6 +9,22 @@ import { inspectAttr } from 'kimi-plugin-inspect-react';
 export default defineConfig({
   base: './',
   plugins: [inspectAttr(), react()],
+  build: {
+    rollupOptions: {
+      output: {
+        onlyExplicitManualChunks: true,
+        manualChunks(id) {
+          if (id.includes('commonjsHelpers')) return 'vendor-runtime';
+          if (!id.includes('/node_modules/')) return undefined;
+          if (/\/node_modules\/(echarts|echarts-for-react|zrender)\//.test(id)) return 'vendor-charts';
+          if (/\/node_modules\/(react|react-dom|react-router|react-router-dom|scheduler|cookie|set-cookie-parser)\//.test(id)) return 'vendor-react';
+          if (/\/node_modules\/(framer-motion|motion-dom|motion-utils)\//.test(id)) return 'vendor-motion';
+          if (id.includes('/node_modules/lucide-react/')) return 'vendor-icons';
+          return undefined;
+        },
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 3000,

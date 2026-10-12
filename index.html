@@ -1,13 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>风控BI监控平台</title>
+    <style>
+      .boot-screen { min-height:100vh; display:grid; place-items:center; margin:0; background:#f5f7fa; color:#334155; font:14px/1.7 system-ui,sans-serif; }
+      .boot-card { max-width:420px; padding:32px; text-align:center; }
+      .boot-spinner { width:28px; height:28px; margin:0 auto 16px; border:3px solid #dbeafe; border-top-color:#2563eb; border-radius:50%; animation:boot-spin 1s linear infinite; }
+      .boot-card h1 { margin:0 0 8px; font-size:18px; }
+      .boot-card p { margin:0; color:#64748b; }
+      .boot-card button { margin-top:18px; padding:8px 18px; border:1px solid #cbd5e1; border-radius:8px; background:white; color:#334155; cursor:pointer; }
+      @keyframes boot-spin { to { transform:rotate(360deg); } }
+      @media (prefers-reduced-motion:reduce) { .boot-spinner { animation:none; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-screen" id="boot-screen" data-state="loading" role="status" aria-live="polite">
+        <div class="boot-card">
+          <div class="boot-spinner" aria-hidden="true"></div>
+          <h1 id="boot-title">正在加载风控监控平台</h1>
+          <p id="boot-message">首次打开需要加载页面资源，请稍候。</p>
+          <button id="boot-retry" type="button" hidden>重新加载</button>
+          <noscript><p>请启用浏览器 JavaScript 后重新加载。</p></noscript>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        function showBootState(title, message, state) {
+          const screen = document.getElementById('boot-screen');
+          if (!screen) return;
+          screen.dataset.state = state;
+          document.getElementById('boot-title').textContent = title;
+          document.getElementById('boot-message').textContent = message;
+          document.getElementById('boot-retry').hidden = false;
+        }
+        document.getElementById('boot-retry').onclick = () => window.location.reload();
+        window.addEventListener('error', () => {
+          showBootState('页面暂时无法加载', '页面资源加载失败，请检查网络后重新加载。', 'error');
+        }, true);
+        window.addEventListener('unhandledrejection', () => {
+          showBootState('页面暂时无法加载', '请重新加载；如仍无法打开，请联系管理员。', 'error');
+        });
+        window.setTimeout(() => {
+          const screen = document.getElementById('boot-screen');
+          if (screen && screen.dataset.state === 'loading') {
+            showBootState('页面正在加载', '加载时间较长，可以继续等待或重新加载。', 'slow');
+          }
+        }, 20000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

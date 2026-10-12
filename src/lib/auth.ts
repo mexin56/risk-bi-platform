@@ -75,7 +75,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(path, { ...options, headers });
-  const body = (await response.json().catch(() => ({}))) as { detail?: string } & T;
+  const body = (response.status === 204 ? {} : await response.json().catch(() => {
+    throw new Error(response.ok ? '服务返回的数据未完整读取，请重试' : `请求失败（HTTP ${response.status}）`);
+  })) as { detail?: string } & T;
   if (!response.ok) {
     throw new Error(body.detail || `请求失败（HTTP ${response.status}）`);
   }

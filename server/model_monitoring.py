@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any
 
 
@@ -310,6 +311,12 @@ def build_model_effect_trend(
 
 def _week_bounds(day: Any) -> tuple[str, str] | None:
     day_text = str(day or "")[:10]
+    return _cached_week_bounds(day_text)
+
+
+@lru_cache(maxsize=2048)
+def _cached_week_bounds(day_text: str) -> tuple[str, str] | None:
+    """The same observation dates recur across models, targets and filter slices."""
     try:
         parsed = datetime.strptime(day_text, "%Y-%m-%d").date()
     except ValueError:

@@ -59,6 +59,7 @@ export interface FundRecord {
   path: string;
   canonical_path: string;
   conditions: FundCondition[];
+  customer_types?: string[];
   level: number;
   level_label: string;
   severity: Severity;

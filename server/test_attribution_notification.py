@@ -11,6 +11,7 @@ from attribution_notification import (
     fund_report_path_is_safe,
     format_fund_markdown,
     format_markdown,
+    publish_public_image_report,
     s3_notifier_from_env,
     format_s3_fund_summary_markdown,
     format_s3_summary_markdown,
@@ -143,6 +144,72 @@ def test_fund_report_path_rejects_credit_report_names(tmp_path: Path):
     assert fund_report_path_is_safe(tmp_path, "fund_attribution_20260928_20260929_060000.png").name == (
         "fund_attribution_20260928_20260929_060000.png"
     )
+
+
+class _StubS3Notifier(S3PngDingTalkNotifier):
+    def __init__(self, *, fail_upload: bool = False):
+        self.fail_upload = fail_upload
+        self.calls: list[tuple] = []
+
+    def upload(self, png_path: Path, pt: str):
+        self.calls.append(("upload", Path(png_path).name, pt))
+        if self.fail_upload:
+            raise RuntimeError("AccessDenied: bucket acl")
+        return {"object_name": f"reports/{pt}.jpg", "image_url": "https://cdn.test/reports/x.jpg"}
+
+    def send_image(self, image_url: str):
+        self.calls.append(("image", image_url))
+        return {"errcode": 0}
+
+    def send_markdown(self, markdown: str, *, title: str = "授信归因日报"):
+        self.calls.append(("markdown", title, markdown))
+        return {"errcode": 0}
+
+
+def test_publish_public_image_sends_inline_image_before_the_summary(tmp_path: Path):
+    notifier = _StubS3Notifier()
+    digest = build_fund_digest(
+        {"meta": {"partition": "20260928"}, "summary": {}, "merged_alerts": []},
+        page_url="http://host/?tab=fund",
+    )
+
+    result = publish_public_image_report(
+        notifier,
+        pt="20260928",
+        image_path=tmp_path / "thumb.jpg",
+        page_url="http://host/?tab=fund",
+        title="资金归集日报",
+        digest=digest,
+        formatter=format_s3_fund_summary_markdown,
+    )
+
+    assert [call[0] for call in notifier.calls] == ["upload", "image", "markdown"]
+    assert notifier.calls[1][1] == "https://cdn.test/reports/x.jpg"
+    assert notifier.calls[2][1] == "资金归集日报"
+    assert "3、[查看原图](https://cdn.test/reports/x.jpg)" in notifier.calls[2][2]
+    assert result["object_name"] == "reports/20260928.jpg"
+
+
+def test_publish_public_image_propagates_upload_failure_for_local_fallback(tmp_path: Path):
+    notifier = _StubS3Notifier(fail_upload=True)
+
+    with pytest.raises(RuntimeError, match="AccessDenied"):
+        publish_public_image_report(
+            notifier,
+            pt="20260928",
+            image_path=tmp_path / "thumb.jpg",
+            page_url=None,
+            title="授信归因日报",
+            digest=build_digest({"meta": {"partition": "20260928"}, "summary": {}, "merged_alerts": []}),
+            formatter=format_s3_summary_markdown,
+        )
+    assert [call[0] for call in notifier.calls] == ["upload"]
+
+
+def test_notifier_falls_back_to_the_intranet_link_when_s3_is_unavailable():
+    source = Path("server/pipeline/dagster_defs.py").read_text(encoding="utf-8")
+    assert source.count("公网图片推送失败，回退本机图片链接") == 2
+    assert "publish_public_image_report(" in source
 
 
 

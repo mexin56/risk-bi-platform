@@ -1,4 +1,4 @@
-"""资金 serving 快照读取：复用只读 parquet 装配，但返回资金字段名。"""
+"""资金 serving 快照读取：复用只读 DuckDB 装配，但返回资金字段名。"""
 
 from __future__ import annotations
 
@@ -31,3 +31,7 @@ def read_partition_ranges(serving_dir: Path):
 
 def snapshot_exists(serving_dir: Path, pt: str, offset: int) -> bool:
     return _assemble.snapshot_exists(serving_dir, pt, offset)
+
+
+def published_partitions(serving_dir: Path, offset: int | None = None) -> list[str]:
+    return _assemble.published_partitions(serving_dir, offset)

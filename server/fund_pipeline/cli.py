@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         service = FundAttributionService()
-        partitions = service.available_partitions()
+        partitions = service.available_partitions(prefer_serving=False)
         if not partitions:
             print("[error] no available fund pt partition", file=sys.stderr)
             return 2

@@ -10,7 +10,7 @@
 流程:MaxCompute 聚合(复用 WarehouseAttributionRunner,算法零改动)
       → 全部预警路径日序列批量预计算(一次扫描)
       → 分区范围一次扫描刷新
-      → DuckDB 事务写入 → serving parquet 快照发布(meta.json 指针收尾)。
+      → DuckDB 事务写入 → serving DuckDB 快照发布(meta.json 指针收尾)。
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def refresh_partition_ranges(service: AttributionService, config: dict[str, Any]
     """
     date_field = config["date_field"]
     ranges: dict[str, dict[str, str]] = {}
-    for pt in service.available_partitions():
+    for pt in service.available_partitions(prefer_serving=False):
         try:
             sql = f"""
                 SELECT MIN(TO_CHAR({date_field}, 'yyyy-MM-dd')) AS min_day,
@@ -258,7 +258,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     service = AttributionService()
     config = load_config()
 
-    partitions = service.available_partitions()
+    partitions = service.available_partitions(prefer_serving=False)
     if not partitions:
         print("[error] no available pt partition", file=sys.stderr)
         return 2
@@ -332,8 +332,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     print(f"db: {DB_PATH}")
-    snapshots = sorted(SERVING_DIR.glob("dashboard_*.parquet")) if SERVING_DIR.exists() else []
-    print(f"serving snapshots: {len(snapshots)}")
+    from pipeline.duckdb_serving import database_path
+    print(f"serving DuckDB: {database_path(SERVING_DIR)}")
+    print(f"serving partitions: {len(assemble.published_partitions(SERVING_DIR))}")
     for row in runs:
         print(f"  {row[0]}  src={row[4]}  dur={row[5]}ms  at={row[3]}")
     return 0

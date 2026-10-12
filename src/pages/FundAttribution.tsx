@@ -51,7 +51,7 @@ const RULE_STATUS_TABS: Array<{ value: RuleStatus | 'history'; label: string }> 
   { value: 2, label: '持续观察监控' },
   { value: 'history', label: '打标记录' },
 ];
-type ShareParams = Partial<Record<'pt' | 'offset' | 'path' | 'range' | 'lv' | 'src' | 'type' | 'win' | 'dim', string>>;
+type ShareParams = Partial<Record<'pt' | 'offset' | 'path' | 'range' | 'lv' | 'src' | 'type' | 'win' | 'dim' | 'customer_type', string>>;
 
 const SEVERITY: Record<Severity, { bg: string; border: string; text: string; dot: string; label: string }> = {
   slate: { bg: '#f8fafc', border: '#e2e8f0', text: '#64748b', dot: '#94a3b8', label: 'Level0' },
@@ -84,7 +84,7 @@ function formatDate(value: string | null | undefined) {
 function readShareParams(): ShareParams {
   const query = new URLSearchParams(window.location.search);
   const result: ShareParams = {};
-  for (const key of ['pt', 'offset', 'path', 'range', 'lv', 'src', 'type', 'win', 'dim'] as const) {
+  for (const key of ['pt', 'offset', 'path', 'range', 'lv', 'src', 'type', 'win', 'dim', 'customer_type'] as const) {
     const value = query.get(key);
     if (value) result[key] = value;
   }
@@ -152,6 +152,17 @@ function SourceTag({ source }: { source: string }) {
   if (source.includes('专家') && source.includes('Top-K')) return <StatusTag text="Top-K + 专家" tone="blue" />;
   if (source.includes('专家')) return <StatusTag text="专家规则" tone="orange" />;
   return <StatusTag text="Top-K" tone="green" />;
+}
+
+function customerTypeValues(record: FundRecord): string[] {
+  const values = record.customer_types?.map((value) => value.trim()).filter(Boolean) ?? [];
+  if (values.length) return values;
+  const value = record.conditions.find((condition) => condition.field === 'cashloan_cid_mob_type')?.value.trim();
+  return value ? [value] : [];
+}
+
+function customerTypeLabel(record: FundRecord): string {
+  return customerTypeValues(record).join('、') || '—';
 }
 
 function WindowCard({ metric, primary = false }: { metric: FundWindowMetric; primary?: boolean }) {
@@ -265,6 +276,7 @@ export default function FundAttribution() {
   const [levelFilter, setLevelFilter] = useState<number | 'all'>(share.lv && ['1', '2', '3'].includes(share.lv) ? Number(share.lv) : 'all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'topk' | 'expert'>(share.src === 'topk' || share.src === 'expert' ? share.src : 'all');
   const [typeFilter, setTypeFilter] = useState(share.type ?? 'all');
+  const [customerTypeFilter, setCustomerTypeFilter] = useState(share.customer_type ?? 'all');
   const [windowFilter, setWindowFilter] = useState<'all' | FundWindowKey>(share.win && ['1d', '3d', '7d'].includes(share.win) ? share.win as FundWindowKey : 'all');
   const [dimFilter, setDimFilter] = useState(share.dim ?? 'all');
   const [resultTab, setResultTab] = useState<'alerts' | 'trend'>('alerts');
@@ -337,14 +349,16 @@ export default function FundAttribution() {
   const activeRecord = selected ?? dashboard?.highlight ?? dashboard?.merged_alerts[0] ?? null;
   const allRows = useMemo(() => dashboard ? allFundRows(dashboard) : [], [dashboard]);
   const anomalyTypes = useMemo(() => Array.from(new Set(allRows.map((record) => record.anomaly_type))).sort(), [allRows]);
+  const customerTypes = useMemo(() => Array.from(new Set(allRows.flatMap(customerTypeValues))).sort(), [allRows]);
   const filteredAlerts = useMemo(() => {
     if (ruleStatusTab === 'history') return [];
     return allRows.filter((record) => {
       const statusMatched = ruleStatusTab === 0 ? !record.is_tracked_only : (record.status ?? 0) === ruleStatusTab;
       const sourceMatched = sourceFilter === 'all' || (sourceFilter === 'topk' && record.source.includes('Top-K')) || (sourceFilter === 'expert' && record.source.includes('专家'));
-      return statusMatched && (levelFilter === 'all' || record.level === levelFilter) && sourceMatched && (typeFilter === 'all' || record.anomaly_type === typeFilter) && (windowFilter === 'all' || record.primary_window === windowFilter) && (dimFilter === 'all' || record.layer === dimFilter);
+      const customerTypeMatched = customerTypeFilter === 'all' || customerTypeValues(record).includes(customerTypeFilter);
+      return statusMatched && (levelFilter === 'all' || record.level === levelFilter) && sourceMatched && customerTypeMatched && (typeFilter === 'all' || record.anomaly_type === typeFilter) && (windowFilter === 'all' || record.primary_window === windowFilter) && (dimFilter === 'all' || record.layer === dimFilter);
     });
-  }, [allRows, dimFilter, levelFilter, ruleStatusTab, sourceFilter, typeFilter, windowFilter]);
+  }, [allRows, customerTypeFilter, dimFilter, levelFilter, ruleStatusTab, sourceFilter, typeFilter, windowFilter]);
   const ruleStatusCounts = useMemo(() => ({ 0: allRows.filter((record) => !record.is_tracked_only).length, 1: allRows.filter((record) => (record.status ?? 0) === 1).length, 2: allRows.filter((record) => (record.status ?? 0) === 2).length }), [allRows]);
   const availableOffsets = useMemo(() => {
     const range = partitionRanges[selectedPartition];
@@ -378,9 +392,9 @@ export default function FundAttribution() {
   const buildShareUrl = useCallback(() => {
     const url = new URL(window.location.href); url.searchParams.set('page', 'attribution'); url.searchParams.set('tab', 'fund');
     const assign = (key: string, value: string | number | null | undefined) => { if (value == null || value === '' || value === 'all') url.searchParams.delete(key); else url.searchParams.set(key, String(value)); };
-    assign('pt', selectedPartition); assign('offset', daysBack || null); assign('path', activeRecord?.id); assign('range', trendRange !== 60 ? trendRange : null); assign('lv', levelFilter !== 'all' ? levelFilter : null); assign('src', sourceFilter); assign('type', typeFilter); assign('win', windowFilter); assign('dim', dimFilter);
+    assign('pt', selectedPartition); assign('offset', daysBack || null); assign('path', activeRecord?.id); assign('range', trendRange !== 60 ? trendRange : null); assign('lv', levelFilter !== 'all' ? levelFilter : null); assign('src', sourceFilter); assign('type', typeFilter); assign('customer_type', customerTypeFilter); assign('win', windowFilter); assign('dim', dimFilter);
     return url.toString();
-  }, [activeRecord?.id, daysBack, dimFilter, levelFilter, selectedPartition, sourceFilter, trendRange, typeFilter, windowFilter]);
+  }, [activeRecord?.id, customerTypeFilter, daysBack, dimFilter, levelFilter, selectedPartition, sourceFilter, trendRange, typeFilter, windowFilter]);
   const handleShare = useCallback(async () => { if (await copyText(buildShareUrl())) { setShareCopied(true); window.setTimeout(() => setShareCopied(false), 2000); } else window.prompt('复制以下链接分享给同事：', buildShareUrl()); }, [buildShareUrl]);
   const handleScreenshot = useCallback(async () => { if (!contentRef.current) return; setShooting(true); try { const dataUrl = await toPng(contentRef.current, { backgroundColor: '#f4f6fa', pixelRatio: 2 }); const link = document.createElement('a'); link.download = `资金归结_${selectedPartition || '最新'}_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.png`; link.href = dataUrl; link.click(); } catch { /* 截图失败不阻断页面 */ } finally { setShooting(false); } }, [selectedPartition]);
 
@@ -408,6 +422,7 @@ export default function FundAttribution() {
     ...(ruleStatusTab === 1 || ruleStatusTab === 2 ? [{ key: 'action_date', title: '措施日期', width: 104, align: 'center' as const, render: (record: FundRecord) => record.status === 0 ? '—' : (record.action_date ?? '—') }] : []),
     { key: 'level_label', title: '等级', sticky: true, width: 104, render: (record) => record.level === 0 ? <span className="text-[11px] text-slate-400">无预警</span> : <SeverityTag severity={record.severity} text={`L${record.level}`} /> },
     { key: 'source', title: '来源', width: 118, render: (record) => <SourceTag source={record.source} /> },
+    { key: 'customer_type', title: '客户类型', width: 140, render: customerTypeLabel },
     { key: 'path', title: '异常归因路径', width: 360, render: (record) => <PathHoverTip path={record.path}><button onClick={() => selectAlertPath(record)} className="max-w-[340px] cursor-pointer truncate text-left font-medium text-slate-700 underline-offset-2 hover:text-blue-600 hover:underline" title="悬停查看完整值; 点击查看该路径近60天趋势">{record.path}</button></PathHoverTip> },
     { key: 'layer', title: '层级', width: 70, align: 'center' },
     { key: 'anomaly_type', title: '异常类型', width: 90 },
@@ -443,7 +458,7 @@ export default function FundAttribution() {
         </div>
         {resultTab === 'alerts' && <>
           <div role="tablist" aria-label="规则处理状态" className="flex items-center gap-1 border-b border-slate-100 px-4 pt-3">{RULE_STATUS_TABS.map((tab) => { const active = ruleStatusTab === tab.value; const count = tab.value === 'history' ? statusHistory.length : ruleStatusCounts[tab.value]; return <button key={tab.value} role="tab" aria-selected={active} onClick={() => setRuleStatusTab(tab.value)} className={`border-b-2 px-3 py-2 text-[12px] font-medium transition-colors ${active ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>{tab.label}<span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${active ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>{count}</span></button>; })}</div>
-          {ruleStatusTab === 'history' ? <>{statusHistoryError && <div className="flex items-center gap-2 px-4 pb-2 pt-3 text-[12px] text-rose-600"><AlertTriangle size={15} />加载打标记录失败：{statusHistoryError}<button onClick={() => void loadStatusHistory()} className="rounded-lg bg-rose-50 px-3 py-1.5 font-medium">重试</button></div>}{statusHistoryLoading && <div className="flex min-h-[180px] items-center justify-center gap-2 text-[12px] text-slate-400"><LoaderCircle size={18} className="animate-spin text-blue-500" />正在加载打标记录…</div>}{!statusHistoryLoading && !statusHistoryError && statusHistory.length === 0 && <div className="flex min-h-[180px] items-center justify-center text-[12px] text-slate-400">暂无打标记录</div>}{!statusHistoryLoading && statusHistory.length > 0 && <FeishuTable columns={historyColumns} data={statusHistory} maxHeight={470} rowKey={(row) => String(row.id)} />}</> : <><div className="flex flex-wrap items-center gap-2 px-4 pb-2"><span className="theme-select-wrap"><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as typeof sourceFilter)} className="theme-select" aria-label="按来源筛选"><option value="all">全部来源</option><option value="topk">Top-K</option><option value="expert">专家</option></select></span><span className="theme-select-wrap"><select value={dimFilter} onChange={(event) => setDimFilter(event.target.value)} className="theme-select" aria-label="按层级筛选"><option value="all">全部层级</option><option value="单维">单维</option><option value="二级">二级</option><option value="三级">三级</option></select></span><span className="theme-select-wrap"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="theme-select" aria-label="按异常类型筛选"><option value="all">全部类型</option>{anomalyTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></span><span className="theme-select-wrap"><select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as typeof windowFilter)} className="theme-select" aria-label="按主窗口筛选"><option value="all">全部窗口</option>{WINDOW_ORDER.map((key) => <option key={key} value={key}>{key === '1d' ? '近1日' : key === '3d' ? '近3日' : '近7日'}</option>)}</select></span><span className="ml-auto text-[10.5px] text-slate-400">共 {filteredAlerts.length} 条</span><div className="flex items-center gap-1.5">{(['all', 3, 2, 1] as const).map((filter) => <button key={String(filter)} onClick={() => setLevelFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${levelFilter === filter ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{filter === 'all' ? '全部等级' : `L${filter}`}</button>)}</div></div><FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} /></>}
+          {ruleStatusTab === 'history' ? <>{statusHistoryError && <div className="flex items-center gap-2 px-4 pb-2 pt-3 text-[12px] text-rose-600"><AlertTriangle size={15} />加载打标记录失败：{statusHistoryError}<button onClick={() => void loadStatusHistory()} className="rounded-lg bg-rose-50 px-3 py-1.5 font-medium">重试</button></div>}{statusHistoryLoading && <div className="flex min-h-[180px] items-center justify-center gap-2 text-[12px] text-slate-400"><LoaderCircle size={18} className="animate-spin text-blue-500" />正在加载打标记录…</div>}{!statusHistoryLoading && !statusHistoryError && statusHistory.length === 0 && <div className="flex min-h-[180px] items-center justify-center text-[12px] text-slate-400">暂无打标记录</div>}{!statusHistoryLoading && statusHistory.length > 0 && <FeishuTable columns={historyColumns} data={statusHistory} maxHeight={470} rowKey={(row) => String(row.id)} />}</> : <><div className="flex flex-wrap items-center gap-2 px-4 pb-2"><span className="theme-select-wrap"><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as typeof sourceFilter)} className="theme-select" aria-label="按来源筛选"><option value="all">全部来源</option><option value="topk">Top-K</option><option value="expert">专家</option></select></span><span className="theme-select-wrap"><select value={customerTypeFilter} onChange={(event) => setCustomerTypeFilter(event.target.value)} className="theme-select" aria-label="按客户类型筛选"><option value="all">全部客户类型</option>{customerTypes.map((customerType) => <option key={customerType} value={customerType}>{customerType}</option>)}</select></span><span className="theme-select-wrap"><select value={dimFilter} onChange={(event) => setDimFilter(event.target.value)} className="theme-select" aria-label="按层级筛选"><option value="all">全部层级</option><option value="单维">单维</option><option value="二级">二级</option><option value="三级">三级</option></select></span><span className="theme-select-wrap"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="theme-select" aria-label="按异常类型筛选"><option value="all">全部类型</option>{anomalyTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></span><span className="theme-select-wrap"><select value={windowFilter} onChange={(event) => setWindowFilter(event.target.value as typeof windowFilter)} className="theme-select" aria-label="按主窗口筛选"><option value="all">全部窗口</option>{WINDOW_ORDER.map((key) => <option key={key} value={key}>{key === '1d' ? '近1日' : key === '3d' ? '近3日' : '近7日'}</option>)}</select></span><span className="ml-auto text-[10.5px] text-slate-400">共 {filteredAlerts.length} 条</span><div className="flex items-center gap-1.5">{(['all', 3, 2, 1] as const).map((filter) => <button key={String(filter)} onClick={() => setLevelFilter(filter)} className={`rounded-md px-2 py-1 text-[10.5px] ${levelFilter === filter ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{filter === 'all' ? '全部等级' : `L${filter}`}</button>)}</div></div><FeishuTable columns={alertColumns} data={filteredAlerts} maxHeight={470} rowKey={(record) => record.id} /></>}
         </>}
         {resultTab === 'trend' && <div className="px-4 pb-4 pt-2">
           <div className="mb-2 text-[10.5px] text-slate-400">全样本每日异常订单与异常率，日期范围与本次资金归因结果一致</div>

@@ -32,6 +32,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from dagster import (  # noqa: E402
+    DefaultScheduleStatus,
     Definitions,
     Failure,
     OpExecutionContext,
@@ -61,8 +62,11 @@ from attribution_notification import (
     format_markdown,
     format_s3_fund_summary_markdown,
     format_s3_summary_markdown,
+    fund_report_path_is_safe,
+    publish_public_image_report,
     report_path_is_safe,
     s3_notifier_from_env,
+    write_thumbnail,
 )
 from pipeline import SERVING_DIR  # noqa: E402
 from pipeline import assemble as serving_assemble  # noqa: E402
@@ -186,62 +190,174 @@ def daily_fund_attribution_job():
     publish_fund_attribution(resolve_fund_target_partition())
 
 
-def _latest_serving_payload(offset: int = 0) -> tuple[str, dict[str, Any]] | None:
-    meta_path = Path(SERVING_DIR) / "meta.json"
-    candidates: list[str] = []
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            candidates = [
-                str(item.get("pt"))
-                for item in (meta.get("snapshots") or [])
-                if int(item.get("offset", -1)) == int(offset) and item.get("pt")
-            ]
-        except Exception:
-            candidates = []
-    if not candidates:
-        pattern = f"dashboard_*_{int(offset)}.parquet"
-        candidates = sorted(
-            {
-                path.name[len("dashboard_") : -len(f"_{int(offset)}.parquet")]
-                for path in Path(SERVING_DIR).glob(pattern)
-            },
-            reverse=True,
-        )
-    for pt in dict.fromkeys(candidates):
-        payload = serving_assemble.read_dashboard_snapshot(SERVING_DIR, pt, offset)
-        if payload is not None:
-            return pt, payload
-    return None
+def _serving_candidates(serving_dir: Path, offset: int = 0) -> list[str]:
+    """从 DuckDB 发现已发布结果分区，通知与两个查询系统保持一致。"""
+    return serving_assemble.published_partitions(serving_dir, offset)
 
 
-def _latest_fund_serving_payload(offset: int = 0) -> tuple[str, dict[str, Any]] | None:
-    meta_path = Path(FUND_SERVING_DIR) / "meta.json"
-    candidates: list[str] = []
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            candidates = [
-                str(item.get("pt"))
-                for item in (meta.get("snapshots") or [])
-                if int(item.get("offset", -1)) == int(offset) and item.get("pt")
-            ]
-        except Exception:
-            candidates = []
-    if not candidates:
-        pattern = f"dashboard_*_{int(offset)}.parquet"
-        candidates = sorted(
-            {
-                path.name[len("dashboard_") : -len(f"_{int(offset)}.parquet")]
-                for path in Path(FUND_SERVING_DIR).glob(pattern)
-            },
-            reverse=True,
-        )
-    for pt in sorted(dict.fromkeys(candidates), reverse=True):
-        payload = fund_serving_assemble.read_dashboard_snapshot(FUND_SERVING_DIR, pt, offset)
+def _load_serving_payload(
+    serving_dir: Path,
+    assembler: Any,
+    pt: str,
+    offset: int = 0,
+) -> dict[str, Any] | None:
+    """读单个分区快照；文件缺失或损坏时返回 None 而不是让整个日报失败。"""
+    try:
+        payload = assembler.read_dashboard_snapshot(serving_dir, pt, offset)
+    except Exception:
+        return None
+    return payload if payload is not None else None
+
+
+NOTIFY_MAX_STALE_DAYS = int(os.getenv("ATTRIBUTION_NOTIFY_MAX_STALE_DAYS", "3"))
+# 默认 1 = 只发当天日报，不回放 backlog（避免停机多天后一次性刷屏）。
+# 想把停机期间的历史日报补回来，调大到 3 或用 scripts/backfill_notify.py 逐天补发。
+NOTIFY_CATCHUP_MAX = int(os.getenv("ATTRIBUTION_NOTIFY_CATCHUP_MAX", "1"))
+
+
+def expected_notify_pt(today: date | None = None) -> str:
+    """日报应该覆盖的分区：昨天。"""
+    return ((today or datetime.now().date()) - timedelta(days=1)).strftime("%Y%m%d")
+
+
+def _pt_age_days(pt: str, anchor: str) -> int | None:
+    """pt 落后 anchor(期望分区)的天数；pt 比 anchor 新或格式不对时返回 None。"""
+    try:
+        target = datetime.strptime(str(pt), "%Y%m%d").date()
+        base = datetime.strptime(str(anchor), "%Y%m%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (base - target).days
+
+
+def _lag_days(pt: str, expected: str) -> int | None:
+    """可用于日报的落后天数：0=就是期望分区；None=比期望分区还新/格式不对。"""
+    lag = _pt_age_days(pt, expected)
+    return lag if lag is not None and lag >= 0 else None
+
+
+def _upstream_partition_status(service: Any, pt: str) -> bool | None:
+    """pt 是否已在上游 MaxCompute 出现；查询失败返回 None(不猜，等着重试)。"""
+    try:
+        return str(pt) in {str(value) for value in service.refresh_partitions()}
+    except Exception:
+        return None
+
+
+def target_notice(plan: dict[str, Any], pt: str) -> str:
+    """每个目标分区各自适用的补发提示。
+
+    最新一条用 plan 里的 notice(说明应该覆盖哪个分区)；
+    backlog 里的历史分区单独标注，让收件人一眼看出这是补发而不是当天日报。
+    """
+    targets = [item[0] for item in plan.get("targets") or []]
+    if not targets or pt == targets[0]:
+        return str(plan.get("notice") or "")
+    return f"补发历史分区：`{pt}` 此前未发送（调度停摆或上游延迟导致）。"
+
+
+def plan_notification(
+    *,
+    candidates: list[str],
+    load_payload,
+    ledger: NotificationLedger,
+    today: date,
+    override: str | None = None,
+    catch_up_max: int = NOTIFY_CATCHUP_MAX,
+    max_stale_days: int = NOTIFY_MAX_STALE_DAYS,
+    allow_catch_up: bool = True,
+) -> dict[str, Any]:
+    """决定这次日报发哪个分区。
+
+    以前只在 pt == 昨天 时才发：上游某天缺分区、或调度停一天，日报就静默断更
+    (10/02~10/07 连续 6 天没发就是这么来的)。现在改成：
+      1. 有昨天分区就发昨天(正常路径)；
+      2. 没有昨天分区就发"最新且未发过"的昨天及更早快照，正文里带补发提示；
+      3. 落后超过 max_stale_days 天就不发，交给缺口巡检告警，
+         避免把陈旧数据当日报发出去误导判断。
+
+    pt 晚于昨天的快照(今天/未来，当天数据不完整，由页面按需计算产生)一律不参与，
+    否则 14:20 会把半天数据当日报发出去。
+    backlog(daemon 停机多天)时一次最多补 catch_up_max 条，防止刷屏。
+
+    allow_catch_up=False 用于"先等等看"的场景：调用方(发送逻辑)会先确认上游到底
+    有没有昨天分区，只有确认上游也没有，才允许拿旧快照补发——否则 14:00 计算还在跑、
+    或者上游只是晚到的时候，不应该先把前天的日报发出去。
+
+    返回 status: plan / already_sent / waiting / stale / missing_snapshot，
+    调用方据此决定发、重试还是跳过。
+    """
+    expected = expected_notify_pt(today)
+    if override:
+        pt = str(override).strip()
+        payload = load_payload(pt)
+        if payload is None:
+            return {
+                "status": "missing_snapshot",
+                "targets": [],
+                "notice": "",
+                "reason": f"指定分区 pt={pt} 没有可用快照",
+            }
+        return {"status": "plan", "targets": [(pt, payload)], "notice": "", "reason": ""}
+
+    recorded = ledger.recorded_pts() - ledger.expired_pending_pts()
+    eligible = [pt for pt in candidates if _lag_days(pt, expected) is not None]
+    usable: list[tuple[str, dict[str, Any]]] = []
+    for pt in eligible:
+        if pt in recorded:
+            continue
+        payload = load_payload(pt)
         if payload is not None:
-            return pt, payload
-    return None
+            usable.append((pt, payload))
+
+    if not usable:
+        if expected in recorded and ledger.is_sent(expected):
+            return {
+                "status": "already_sent",
+                "targets": [],
+                "notice": "",
+                "reason": f"pt={expected} 今日已发送",
+            }
+        return {
+            "status": "waiting",
+            "targets": [],
+            "notice": "",
+            "reason": (
+                f"pt={expected} 已发布但尚未发送成功，稍后重试"
+                if expected in eligible
+                else f"没有 pt<={expected} 的可用快照(昨天分区可能尚未发布)"
+            ),
+        }
+
+    newest_pt, newest_payload = usable[0]
+    if newest_pt != expected and not allow_catch_up:
+        # 上游分区状态还没确认：等昨天分区发布，不要抢跑发旧数据
+        return {
+            "status": "waiting",
+            "targets": [],
+            "notice": "",
+            "reason": f"最新可用快照 pt={newest_pt} 还不是期望分区 {expected}，等待昨天分区发布",
+        }
+    lag = _lag_days(newest_pt, expected)
+    if lag is not None and lag > max_stale_days:
+        return {
+            "status": "stale",
+            "targets": [],
+            "notice": "",
+            "reason": (
+                f"最新可用快照 pt={newest_pt} 落后期望分区 {expected} 达 {lag} 天，"
+                f"超过补发阈值 {max_stale_days} 天"
+            ),
+        }
+
+    notice = ""
+    if newest_pt != expected:
+        notice = (
+            f"补发：最新可用数据分区为 `{newest_pt}`，日报应覆盖 `{expected}`。"
+            "请关注上游数据缺失或调度停摆。"
+        )
+    targets = [(newest_pt, newest_payload)] + usable[1 : max(1, int(catch_up_max))]
+    return {"status": "plan", "targets": targets, "notice": notice, "reason": ""}
 
 
 def _notification_report_path(pt: str) -> Path:
@@ -250,101 +366,198 @@ def _notification_report_path(pt: str) -> Path:
 
 
 def _fund_notification_report_path(pt: str) -> Path:
-    from attribution_notification import fund_report_path_is_safe
-
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return fund_report_path_is_safe(DEFAULT_REPORT_DIR, f"{FUND_REPORT_PREFIX}_{pt}_{timestamp}.png")
 
 
+def _report_image_url(
+    public_base: str,
+    report_path: Path | None,
+    api_prefix: str,
+    *,
+    thumbnail: Path | None = None,
+) -> str | None:
+    """Build the DingTalk image link; prefer the JPEG thumbnail over the full PNG."""
+    if not public_base or report_path is None:
+        return None
+    has_thumbnail = thumbnail is not None and Path(thumbnail).is_file()
+    suffix = "/thumbnail" if has_thumbnail else ""
+    return f"{public_base}/api/{api_prefix}/notification-reports/{report_path.name}{suffix}"
+
+
 @op(
-    description="读取昨天授信归因快照，优先发送截图并回退发送文字日报",
+    description="发送授信归因钉钉日报：优先昨天分区，缺失时补发最新未发送分区",
     retry_policy=RetryPolicy(max_retries=3, delay=20 * 60),
 )
-def notify_attribution_dingtalk(context) -> dict[str, Any]:
-    load_local_env()
-    latest = _latest_serving_payload()
-    if latest is None:
-        context.log.warning("没有可用的授信归因 serving 快照，跳过钉钉日报")
-        return {"status": "skipped", "reason": "no_serving_snapshot"}
+def notify_attribution_dingtalk(context, pt: str | None = None) -> dict[str, Any]:
+    """pt 为空时自动挑选目标分区；传入 pt 用于上游补数后的指定补发。"""
+    return _send_credit_daily(log=context.log, override=pt)
 
-    pt, payload = latest
-    if select_ready_partition([pt], today=datetime.now().date()) is None:
-        context.log.warning("授信归因 serving 快照尚未更新到昨天分区(pt=%s)，20 分钟后重试", pt)
+
+def _send_credit_daily(*, log, override: str | None = None, catch_up: bool = True) -> dict[str, Any]:
+    """授信归因日报发送逻辑(op 与补发脚本共用)。"""
+    load_local_env()
+    ledger = NotificationLedger(NOTIFICATION_LEDGER_PATH)
+    expected = expected_notify_pt()
+    plan_kwargs = dict(
+        candidates=_serving_candidates(SERVING_DIR),
+        load_payload=lambda candidate: _load_serving_payload(SERVING_DIR, serving_assemble, candidate),
+        ledger=ledger,
+        today=datetime.now().date(),
+        override=override,
+        catch_up_max=NOTIFY_CATCHUP_MAX if catch_up else 1,
+    )
+    plan = plan_notification(**plan_kwargs, allow_catch_up=False)
+    if plan["status"] in {"waiting", "stale"} and not override:
+        # 先确认上游到底有没有昨天分区：只是发布延迟就继续等，真没有才补发旧快照。
+        if _upstream_partition_status(_service(), expected) is False:
+            log.warning(
+                "上游没有 pt=%s 分区(不是发布延迟)，改为补发最新可用快照：%s",
+                expected,
+                plan["reason"],
+            )
+            plan = plan_notification(**plan_kwargs, allow_catch_up=True)
+    if not plan["targets"]:
+        if override:
+            raise Failure(description=f"授信归因指定分区补发失败：{plan['reason']}")
+        if plan["status"] == "already_sent":
+            log.info("授信归因日报已发送过，无需重复：%s", plan["reason"])
+            return {"status": "already_sent", "pt": expected_notify_pt()}
+        log.warning("授信归因暂无可发送日报：%s，20 分钟后重试", plan["reason"])
         raise RetryRequested(seconds_to_wait=20 * 60)
-    payload = _service().with_rule_statuses(payload)
+
     web_url = os.getenv("ATTRIBUTION_WEB_URL", "").strip()
     public_base = os.getenv("ATTRIBUTION_PUBLIC_BASE_URL", "").strip().rstrip("/")
     s3_notifier = s3_notifier_from_env()
     notifier = DingTalkNotifier()
-    ledger = NotificationLedger(NOTIFICATION_LEDGER_PATH)
-    has_delivery_channel = s3_notifier is not None or bool(notifier.webhook_url)
-    if has_delivery_channel and not ledger.claim(pt):
-        context.log.info("pt=%s already sent, skip duplicate notification", pt)
-        return {"status": "already_sent", "pt": pt}
+    results: list[dict[str, Any]] = []
 
-    report_path: Path | None = None
-    if web_url:
-        report_path = _notification_report_path(pt)
+    for target_pt, snapshot in plan["targets"]:
+        if not ledger.claim(target_pt):
+            if not ledger.is_sent(target_pt):
+                log.warning("授信归因 pt=%s 仍有发送中记录，不能视为成功，20 分钟后重试", target_pt)
+                raise RetryRequested(seconds_to_wait=20 * 60)
+            log.info("pt=%s already sent, skip duplicate notification", target_pt)
+            results.append({"status": "already_sent", "pt": target_pt})
+            continue
+
         try:
-            capture_attribution_page(
-                web_url,
-                os.getenv("ATTRIBUTION_NOTIFY_USERNAME", "").strip(),
-                os.getenv("ATTRIBUTION_NOTIFY_PASSWORD", "").strip(),
-                report_path,
-            )
-        except Exception:
-            report_path = None
-            context.log.exception("生成授信归因完整长截图失败，回退发送文字日报，pt=%s", pt)
-    else:
-        context.log.warning("未配置 ATTRIBUTION_WEB_URL，回退发送授信归因文字日报，pt=%s", pt)
+            payload = _service().with_rule_statuses(snapshot)
+            report_path: Path | None = None
+            if web_url:
+                report_path = _notification_report_path(target_pt)
+                try:
+                    capture_attribution_page(
+                        web_url,
+                        os.getenv("ATTRIBUTION_NOTIFY_USERNAME", "").strip(),
+                        os.getenv("ATTRIBUTION_NOTIFY_PASSWORD", "").strip(),
+                        report_path,
+                    )
+                except Exception:
+                    report_path = None
+                    log.exception("生成授信归因完整长截图失败，回退发送文字日报，pt=%s", target_pt)
+            else:
+                log.warning("未配置 ATTRIBUTION_WEB_URL，回退发送授信归因文字日报，pt=%s", target_pt)
 
-    report_url = (
-        f"{public_base}/api/credit-attribution/notification-reports/{report_path.name}"
-        if public_base and report_path is not None
-        else None
-    )
-    digest = build_digest(payload, report_url=report_url, page_url=web_url)
-    markdown = format_markdown(digest)
-    try:
-        if s3_notifier is not None and report_path is not None:
-            response = s3_notifier.upload(report_path, pt)
-            summary_markdown = format_s3_summary_markdown(
-                digest,
-                image_url=response["image_url"],
-                page_url=web_url,
+            thumbnail = write_thumbnail(report_path) if report_path is not None else None
+            report_url = _report_image_url(
+                public_base, report_path, "credit-attribution", thumbnail=thumbnail
             )
-            summary_response = s3_notifier.send_markdown(summary_markdown)
-            response = {**response, "summary_response": summary_response}
-            delivery_name = response["object_name"]
-        elif s3_notifier is not None:
-            response = s3_notifier.send_markdown(markdown)
-            delivery_name = f"credit_attribution_{pt}_markdown"
-        else:
-            response = notifier.send_markdown(markdown)
-            delivery_name = report_path.name if report_path is not None else f"credit_attribution_{pt}_markdown"
-        ledger.mark_sent(pt, delivery_name)
-    except Exception:
-        ledger.release(pt)
-        context.log.exception("发送授信归因钉钉日报失败，pt=%s", pt)
-        raise
-    context.log.info("授信归因钉钉日报发送成功：pt=%s report=%s", pt, report_path or "markdown")
-    return {"status": "sent", "pt": pt, "report_path": str(report_path) if report_path else None, "response": response}
+            digest = build_digest(payload, report_url=report_url, page_url=web_url)
+            notice = target_notice(plan, target_pt)
+            if notice:
+                digest["notice"] = notice
+            markdown = format_markdown(digest)
+            if s3_notifier is not None and report_path is not None:
+                # 公网对象：钉钉服务端能取图，外网同事也能看到图片本身。
+                try:
+                    response = publish_public_image_report(
+                        s3_notifier,
+                        pt=target_pt,
+                        image_path=thumbnail or report_path,
+                        page_url=web_url,
+                        title="授信归因日报",
+                        digest=digest,
+                        formatter=format_s3_summary_markdown,
+                    )
+                    delivery_name = response["object_name"]
+                except Exception:
+                    log.exception("公网图片推送失败，回退本机图片链接，pt=%s", target_pt)
+                    response = notifier.send_markdown(markdown)
+                    delivery_name = report_path.name
+            elif s3_notifier is not None:
+                response = s3_notifier.send_markdown(markdown)
+                delivery_name = f"credit_attribution_{target_pt}_markdown"
+            else:
+                response = notifier.send_markdown(markdown)
+                delivery_name = (
+                    report_path.name if report_path is not None
+                    else f"credit_attribution_{target_pt}_markdown"
+                )
+            ledger.mark_sent(target_pt, delivery_name, expected_pt=expected)
+        except Exception:
+            ledger.release(target_pt)
+            log.exception("发送授信归因钉钉日报失败，pt=%s", target_pt)
+            raise
+
+        log.info("授信归因钉钉日报发送成功：pt=%s report=%s", target_pt, report_path or "markdown")
+        results.append(
+            {
+                "status": "sent",
+                "pt": target_pt,
+                "report_path": str(report_path) if report_path else None,
+                "response": response,
+            }
+        )
+
+    return {
+        "status": "sent",
+        "pt": results[0]["pt"],
+        "notice": plan["notice"],
+        "results": results,
+    }
 
 
 @op(
-    description="读取昨天资金归集快照，截图并发送钉钉日报（模板与授信归因一致）",
+    description="发送资金归集钉钉日报：优先昨天分区，缺失时补发最新未发送分区",
     retry_policy=RetryPolicy(max_retries=3, delay=20 * 60),
 )
-def notify_fund_dingtalk(context) -> dict[str, Any]:
-    load_local_env()
-    latest = _latest_fund_serving_payload()
-    if latest is None:
-        context.log.warning("没有可用的资金归集 serving 快照，跳过钉钉日报")
-        return {"status": "skipped", "reason": "no_fund_serving_snapshot"}
+def notify_fund_dingtalk(context, pt: str | None = None) -> dict[str, Any]:
+    """pt 为空时自动挑选目标分区；传入 pt 用于上游补数后的指定补发。"""
+    return _send_fund_daily(log=context.log, override=pt)
 
-    pt, payload = latest
-    if select_ready_partition([pt], today=datetime.now().date()) is None:
-        context.log.warning("资金归集 serving 快照尚未更新到昨天分区(pt=%s)，20 分钟后重试", pt)
+
+def _send_fund_daily(*, log, override: str | None = None, catch_up: bool = True) -> dict[str, Any]:
+    """资金归集日报发送逻辑(op 与补发脚本共用)。"""
+    load_local_env()
+    ledger = NotificationLedger(FUND_NOTIFICATION_LEDGER_PATH)
+    expected = expected_notify_pt()
+    plan_kwargs = dict(
+        candidates=_serving_candidates(FUND_SERVING_DIR),
+        load_payload=lambda candidate: _load_serving_payload(
+            FUND_SERVING_DIR, fund_serving_assemble, candidate
+        ),
+        ledger=ledger,
+        today=datetime.now().date(),
+        override=override,
+        catch_up_max=NOTIFY_CATCHUP_MAX if catch_up else 1,
+    )
+    plan = plan_notification(**plan_kwargs, allow_catch_up=False)
+    if plan["status"] in {"waiting", "stale"} and not override:
+        if _upstream_partition_status(FundAttributionService(), expected) is False:
+            log.warning(
+                "资金归集上游没有 pt=%s 分区(不是发布延迟)，改为补发最新可用快照：%s",
+                expected,
+                plan["reason"],
+            )
+            plan = plan_notification(**plan_kwargs, allow_catch_up=True)
+    if not plan["targets"]:
+        if override:
+            raise Failure(description=f"资金归集指定分区补发失败：{plan['reason']}")
+        if plan["status"] == "already_sent":
+            log.info("资金归集日报已发送过，无需重复：%s", plan["reason"])
+            return {"status": "already_sent", "pt": expected_notify_pt()}
+        log.warning("资金归集暂无可发送日报：%s，20 分钟后重试", plan["reason"])
         raise RetryRequested(seconds_to_wait=20 * 60)
 
     s3_notifier = s3_notifier_from_env(
@@ -352,64 +565,90 @@ def notify_fund_dingtalk(context) -> dict[str, Any]:
         object_prefix=os.getenv("DINGTALK_S3_FUND_PREFIX"),
     )
     notifier = DingTalkNotifier()
-    ledger = NotificationLedger(FUND_NOTIFICATION_LEDGER_PATH)
-    if not ledger.claim(pt):
-        context.log.info("fund pt=%s already sent, skip duplicate notification", pt)
-        return {"status": "already_sent", "pt": pt}
+    results: list[dict[str, Any]] = []
 
-    try:
-        service = FundAttributionService()
-        payload = attach_tracked_only_rules(
-            service.with_rule_statuses(payload), service.active_tracked_rules()
-        )
-        page_url = os.getenv("ATTRIBUTION_FUND_WEB_URL", "").strip() or None
-        public_base = os.getenv("ATTRIBUTION_PUBLIC_BASE_URL", "").strip().rstrip("/")
-        report_path: Path | None = None
-        if page_url:
-            report_path = _fund_notification_report_path(pt)
-            try:
-                capture_fund_page(
-                    page_url,
-                    os.getenv("ATTRIBUTION_NOTIFY_USERNAME", "").strip(),
-                    os.getenv("ATTRIBUTION_NOTIFY_PASSWORD", "").strip(),
-                    report_path,
+    for target_pt, snapshot in plan["targets"]:
+        if not ledger.claim(target_pt):
+            if not ledger.is_sent(target_pt):
+                log.warning("资金归集 pt=%s 仍有发送中记录，不能视为成功，20 分钟后重试", target_pt)
+                raise RetryRequested(seconds_to_wait=20 * 60)
+            log.info("fund pt=%s already sent, skip duplicate notification", target_pt)
+            results.append({"status": "already_sent", "pt": target_pt})
+            continue
+
+        try:
+            service = FundAttributionService()
+            payload = attach_tracked_only_rules(
+                service.with_rule_statuses(snapshot), service.active_tracked_rules()
+            )
+            page_url = os.getenv("ATTRIBUTION_FUND_WEB_URL", "").strip() or None
+            public_base = os.getenv("ATTRIBUTION_PUBLIC_BASE_URL", "").strip().rstrip("/")
+            report_path: Path | None = None
+            if page_url:
+                report_path = _fund_notification_report_path(target_pt)
+                try:
+                    capture_fund_page(
+                        page_url,
+                        os.getenv("ATTRIBUTION_NOTIFY_USERNAME", "").strip(),
+                        os.getenv("ATTRIBUTION_NOTIFY_PASSWORD", "").strip(),
+                        report_path,
+                    )
+                except Exception:
+                    report_path = None
+                    log.exception("生成资金归集完整长截图失败，回退发送文字日报，pt=%s", target_pt)
+            else:
+                log.warning(
+                    "未配置 ATTRIBUTION_FUND_WEB_URL，资金归集日报只发送文字摘要，pt=%s",
+                    target_pt,
                 )
-            except Exception:
-                report_path = None
-                context.log.exception("生成资金归集完整长截图失败，回退发送文字日报，pt=%s", pt)
-        else:
-            context.log.warning("未配置 ATTRIBUTION_FUND_WEB_URL，资金归集日报只发送文字摘要，pt=%s", pt)
 
-        report_url = (
-            f"{public_base}/api/fund-attribution/notification-reports/{report_path.name}"
-            if public_base and report_path is not None
-            else None
-        )
-        digest = build_fund_digest(payload, report_url=report_url, page_url=page_url)
-        if s3_notifier is not None and report_path is not None:
-            uploaded = s3_notifier.upload(report_path, pt)
-            markdown = format_s3_fund_summary_markdown(
-                digest,
-                image_url=uploaded["image_url"],
-                page_url=page_url,
+            thumbnail = write_thumbnail(report_path) if report_path is not None else None
+            report_url = _report_image_url(
+                public_base, report_path, "fund-attribution", thumbnail=thumbnail
             )
-            response = s3_notifier.send_markdown(markdown, title="资金归集日报")
-            delivery_name = uploaded["object_name"]
-        else:
-            response = notifier.send_markdown(
-                format_fund_markdown(digest), title="资金归集日报"
-            )
-            delivery_name = (
-                report_path.name if report_path is not None else f"fund_attribution_{pt}_markdown"
-            )
-        ledger.mark_sent(pt, delivery_name)
-    except Exception:
-        ledger.release(pt)
-        context.log.exception("发送资金归集钉钉日报失败，pt=%s", pt)
-        raise
+            digest = build_fund_digest(payload, report_url=report_url, page_url=page_url)
+            notice = target_notice(plan, target_pt)
+            if notice:
+                digest["notice"] = notice
+            markdown = format_fund_markdown(digest)
+            if s3_notifier is not None and report_path is not None:
+                # 公网对象：钉钉服务端能取图，外网同事也能看到图片本身。
+                try:
+                    response = publish_public_image_report(
+                        s3_notifier,
+                        pt=target_pt,
+                        image_path=thumbnail or report_path,
+                        page_url=page_url,
+                        title="资金归集日报",
+                        digest=digest,
+                        formatter=format_s3_fund_summary_markdown,
+                    )
+                    delivery_name = response["object_name"]
+                except Exception:
+                    log.exception("公网图片推送失败，回退本机图片链接，pt=%s", target_pt)
+                    response = notifier.send_markdown(markdown, title="资金归集日报")
+                    delivery_name = report_path.name
+            else:
+                response = notifier.send_markdown(markdown, title="资金归集日报")
+                delivery_name = (
+                    report_path.name if report_path is not None
+                    else f"fund_attribution_{target_pt}_markdown"
+                )
+            ledger.mark_sent(target_pt, delivery_name, expected_pt=expected)
+        except Exception:
+            ledger.release(target_pt)
+            log.exception("发送资金归集钉钉日报失败，pt=%s", target_pt)
+            raise
 
-    context.log.info("资金归集钉钉日报发送成功：pt=%s", pt)
-    return {"status": "sent", "pt": pt, "response": response}
+        log.info("资金归集钉钉日报发送成功：pt=%s", target_pt)
+        results.append({"status": "sent", "pt": target_pt, "response": response})
+
+    return {
+        "status": "sent",
+        "pt": results[0]["pt"],
+        "notice": plan["notice"],
+        "results": results,
+    }
 
 
 @job(
@@ -433,6 +672,7 @@ nightly_schedule = ScheduleDefinition(
     cron_schedule="00 14 * * *",  # 每天 14:00,检查昨天分区后再发布
     execution_timezone="Asia/Shanghai",
     name="nightly_attribution_1400",
+    default_status=DefaultScheduleStatus.STOPPED,
 )
 
 
@@ -441,6 +681,7 @@ fund_schedule = ScheduleDefinition(
     cron_schedule="00 14 * * *",  # 每天 14:00,检查昨天分区后再发布
     execution_timezone="Asia/Shanghai",
     name="daily_fund_attribution_1400",
+    default_status=DefaultScheduleStatus.STOPPED,
 )
 
 
@@ -449,6 +690,7 @@ dingtalk_schedule = ScheduleDefinition(
     cron_schedule="20 14 * * *",
     execution_timezone="Asia/Shanghai",
     name="daily_attribution_dingtalk_1420",
+    default_status=DefaultScheduleStatus.STOPPED,
 )
 
 
@@ -457,6 +699,7 @@ fund_dingtalk_schedule = ScheduleDefinition(
     cron_schedule="20 14 * * *",
     execution_timezone="Asia/Shanghai",
     name="daily_fund_attribution_dingtalk_1420",
+    default_status=DefaultScheduleStatus.STOPPED,
 )
 
 

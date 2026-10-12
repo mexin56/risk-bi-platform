@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
@@ -19,16 +19,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import Overview from '@/pages/Overview';
-import Lifecycle, { STAGES, type StageKey } from '@/pages/Lifecycle';
-import Channel from '@/pages/Channel';
-import Fraud from '@/pages/Fraud';
-import Vintage from '@/pages/Vintage';
-import ModelEffectiveness from '@/pages/ModelEffectiveness';
-import Stability from '@/pages/Stability';
-import CreditStrategy from '@/pages/CreditStrategy';
-import AttributionMonitor from '@/pages/AttributionMonitor';
-import UsersPage from '@/pages/Users';
+import { STAGES, type StageKey } from '@/lib/lifecycleStages';
 import Login from '@/pages/Login';
 import ThemeSettings from '@/components/ThemeSettings';
 import { applyTheme, getTheme, type ThemePreset } from '@/lib/theme';
@@ -42,7 +33,17 @@ import {
 } from '@/lib/auth';
 import { normalizePageParam } from '@/lib/attributionTab';
 
-type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'fundMonitor' | 'channel' | 'fraud' | 'vintage' | 'model' | 'stability' | 'users';
+const Overview = lazy(() => import('@/pages/Overview'));
+const Lifecycle = lazy(() => import('@/pages/Lifecycle'));
+const Channel = lazy(() => import('@/pages/Channel'));
+const Fraud = lazy(() => import('@/pages/Fraud'));
+const Vintage = lazy(() => import('@/pages/Vintage'));
+const ModelEffectiveness = lazy(() => import('@/pages/ModelEffectiveness'));
+const CreditStrategy = lazy(() => import('@/pages/CreditStrategy'));
+const AttributionMonitor = lazy(() => import('@/pages/AttributionMonitor'));
+const UsersPage = lazy(() => import('@/pages/Users'));
+
+type PageKey = 'overview' | 'lifecycle' | 'creditStrategy' | 'attribution' | 'fundMonitor' | 'channel' | 'fraud' | 'vintage' | 'model' | 'users';
 
 const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] = [
   { key: 'overview', label: '大盘数据', icon: Gauge, desc: '经营全景与资产质量' },
@@ -52,8 +53,7 @@ const NAV: { key: PageKey; label: string; icon: typeof Gauge; desc: string }[] =
   { key: 'channel', label: '渠道质量', icon: Network, desc: '助贷渠道 · 通过率×风险×成本' },
   { key: 'fraud', label: '反欺诈监控', icon: ShieldAlert, desc: '规则命中 · 设备聚集 · 团伙预警' },
   { key: 'vintage', label: 'Vintage 监控', icon: Layers, desc: '账龄结构与 Cohort 表现' },
-  { key: 'model', label: '模型分监控', icon: Activity, desc: 'PSI / KS / 分布漂移' },
-  { key: 'stability', label: '模型稳定性', icon: ShieldCheck, desc: 'PSI趋势 · 迁移矩阵 · 漂移归因' },
+  { key: 'model', label: '模型分监控', icon: Activity, desc: '模型效果 · 稳定性 · 客群变化' },
   { key: 'users', label: '权限管理', icon: KeyRound, desc: '用户 · 角色 · 页面权限' },
 ];
 
@@ -76,10 +76,25 @@ function LiveClock() {
   );
 }
 
+function PageLoading({ label }: { label: string }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 15000);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return <div role="status" className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm text-slate-500">
+    <RefreshCw size={20} className="animate-spin" />
+    <span>正在加载{label}…</span>
+    {slow && <><span className="text-xs">页面资源仍在加载，可以继续等待或重新加载。</span>
+      <button type="button" onClick={() => window.location.reload()} className="rounded-md border border-slate-300 bg-white px-3 py-1.5">重新加载</button></>}
+  </div>;
+}
+
 export default function App() {
   // 分享链接支持: 初始页面从 ?page= 恢复(无参数或非法值回落大盘)
   const [page, setPageState] = useState<PageKey>(() => {
     const value = normalizePageParam(new URLSearchParams(window.location.search).get('page'));
+    if (value === 'stability') return 'model';
     return NAV.some((n) => n.key === value) ? (value as PageKey) : 'overview';
   });
   const [collapsed, setCollapsed] = useState(false);
@@ -472,6 +487,7 @@ export default function App() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
+              <Suspense fallback={<PageLoading label={active.label} />}>
               {page === 'overview' && <Overview />}
               {page === 'lifecycle' && <Lifecycle stage={stage} />}
               {page === 'creditStrategy' && <CreditStrategy />}
@@ -480,8 +496,8 @@ export default function App() {
               {page === 'fraud' && <Fraud />}
               {page === 'vintage' && <Vintage />}
               {page === 'model' && <ModelEffectiveness />}
-              {page === 'stability' && <Stability />}
               {page === 'users' && session && <UsersPage currentUser={session.user} />}
+              </Suspense>
             </motion.div>
           </AnimatePresence>
           </div>

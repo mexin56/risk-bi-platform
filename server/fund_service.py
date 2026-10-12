@@ -14,14 +14,16 @@ import copy
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 try:
@@ -106,6 +108,7 @@ class FundAttributionService:
         self._status_store = AttributionStatusStore(STATUS_DB_PATH)
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._path_trend_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._published_versions: dict[str, str] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
         self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
@@ -130,15 +133,14 @@ class FundAttributionService:
         )
 
     def available_partitions(self, *, prefer_serving: bool = True) -> list[str]:
+        if prefer_serving:
+            published = fund_assemble.published_partitions(FUND_SERVING_DIR)
+            if published:
+                self._partition_cache = (time.time(), published)
+                return list(published)
         cached = self._partition_cache
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return list(cached[1])
-        if prefer_serving:
-            published_ranges = fund_assemble.read_partition_ranges(FUND_SERVING_DIR)
-            if published_ranges:
-                result = sorted(published_ranges, reverse=True)
-                self._partition_cache = (time.time(), result)
-                return list(result)
         odps = self._odps()
         table = odps.get_table(self.table_name.split(".")[-1])
         partitions: list[str] = []
@@ -157,13 +159,13 @@ class FundAttributionService:
 
     def partition_ranges(self) -> dict[str, dict[str, str]]:
         """每个分区内 create_date 的 MIN/MAX，供前端观察区间档位动态计算。"""
-        cached = self._partition_range_cache
-        if cached and time.time() - cached[0] < CACHE_SECONDS:
-            return {key: dict(value) for key, value in cached[1].items()}
         published = fund_assemble.read_partition_ranges(FUND_SERVING_DIR)
         if published:
             self._partition_range_cache = (time.time(), published)
             return {key: dict(value) for key, value in published.items()}
+        cached = self._partition_range_cache
+        if cached and time.time() - cached[0] < CACHE_SECONDS:
+            return {key: dict(value) for key, value in cached[1].items()}
         ranges: dict[str, dict[str, str]] = {}
         date_field = self.config["date_field"]
         for pt in self.available_partitions():
@@ -225,15 +227,9 @@ class FundAttributionService:
 
     def _latest_published_partition(self, offset: int) -> str | None:
         """最近一个已发布 serving/缓存分区（不访问 MaxCompute，页面秒开）。"""
-        if FUND_SERVING_DIR.exists():
-            pattern = re.compile(r"^dashboard_([A-Za-z0-9_-]+)_([0-9]+)\.parquet$")
-            candidates: list[str] = []
-            for path in FUND_SERVING_DIR.glob(f"dashboard_*_{offset}.parquet"):
-                match = pattern.fullmatch(path.name)
-                if match and int(match.group(2)) == offset:
-                    candidates.append(match.group(1))
-            if candidates:
-                return sorted(set(candidates), reverse=True)[0]
+        candidates = fund_assemble.published_partitions(FUND_SERVING_DIR, offset)
+        if candidates:
+            return candidates[0]
         if not DISK_CACHE_DIR.exists():
             return None
         pattern = re.compile(r"^fund_([A-Za-z0-9_-]+)_(\d+)\.json$")
@@ -283,6 +279,29 @@ class FundAttributionService:
         return result
 
     # ---------- dashboard ----------
+    def published_dashboard(self, partition: str | None = None, offset: int = 0,
+                            refresh: bool = False) -> dict[str, Any]:
+        """展示专用入口：只读已发布 DuckDB，缺少结果时由调度任务补算。"""
+        offset = max(0, min(int(offset), 180))
+        if fund_assemble is None:
+            raise FundAttributionServiceError("业务结果读取模块不可用，请检查服务配置。")
+        if partition is not None and not SAFE_PARTITION.fullmatch(partition):
+            raise FundAttributionServiceError(f"分区 pt={partition} 格式不合法。")
+        candidates = fund_assemble.published_partitions(FUND_SERVING_DIR, offset)
+        selected = partition or (candidates[0] if candidates else None)
+        if selected is None or selected not in candidates:
+            raise FundAttributionServiceError(f"pt={partition or 'latest'}、offset={offset} 尚无已发布结果，请在 MyWorkflow 调度任务中执行计算。")
+        from pipeline.business_results import snapshot_version
+        version = snapshot_version(FUND_SERVING_DIR)
+        cache_key = f"{selected}|{offset}"
+        cached = self._cache.get(cache_key)
+        if cached and not refresh and self._published_versions.get(cache_key) == version and time.time() - cached[0] < CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+        snapshot = fund_assemble.read_dashboard_snapshot(FUND_SERVING_DIR, selected, offset)
+        if snapshot is None:
+            raise FundAttributionServiceError(f"pt={selected}、offset={offset} 的业务结果读取失败，请检查 MyWorkflow 任务的发布状态。")
+        return copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
+
     def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
         offset = max(0, min(int(offset), 180))
         selected = partition
@@ -305,6 +324,11 @@ class FundAttributionService:
 
         cached = self._cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
+            from pipeline.business_results import snapshot_version
+            if self._published_versions.get(cache_key) != snapshot_version(FUND_SERVING_DIR):
+                serving = fund_assemble.read_dashboard_snapshot(FUND_SERVING_DIR, selected, offset)
+                if serving is not None:
+                    return self._adopt_serving_snapshot(serving, selected, offset, cache_key)
             result = copy.deepcopy(cached[1])
             result["meta"]["cache_hit"] = True
             return result
@@ -357,25 +381,25 @@ class FundAttributionService:
         result["meta"]["serving"] = True
         result["meta"]["async_refresh"] = False
         self._cache[cache_key] = (time.time(), result)
-        self._save_disk_cache(cache_key, result)
+        self._published_versions[cache_key] = str((result.get("meta") or {}).get("result_version") or "")
         for key in [key for key in self._path_trend_cache if key.startswith(f"{selected}|{offset}|")]:
             self._path_trend_cache.pop(key, None)
         return result
 
     def _compute_and_cache(self, selected: str, offset: int) -> dict[str, Any]:
-        runner = FundAttributionRunner(
-            config=self.config,
-            table=self.table_name,
-            partition=selected,
-            offset=offset,
-            query_rows=_run_sql_rows,
+        # 手动刷新同样经过管线发布，再从 DuckDB 读取，确保两个系统看到同一结果。
+        proc = subprocess.run(
+            [sys.executable, "-m", "fund_pipeline.cli", "run", "--pt", selected,
+             "--offset", str(offset), "--source", "api-refresh"],
+            cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=int(os.getenv("ATTRIBUTION_PIPELINE_TIMEOUT_SECONDS", "1200")),
         )
-        result = runner.run()
-        result["meta"]["cache_hit"] = False
-        result["meta"]["async_refresh"] = False
-        self._cache[f"{selected}|{offset}"] = (time.time(), result)
-        self._save_disk_cache(f"{selected}|{offset}", result)
-        return copy.deepcopy(result)
+        if proc.returncode != 0:
+            raise FundAttributionServiceError("资金归集计算未能发布，已保留上次结果，请稍后重试。")
+        result = fund_assemble.read_dashboard_snapshot(FUND_SERVING_DIR, selected, offset)
+        if result is None:
+            raise FundAttributionServiceError("资金归集结果尚未发布，请稍后重试。")
+        return self._adopt_serving_snapshot(result, selected, offset, f"{selected}|{offset}")
 
     def _recompute(self, selected: str, offset: int = 0) -> None:
         """后台线程强制重算并更新缓存（force 刷新不阻塞请求）。"""
@@ -391,7 +415,7 @@ class FundAttributionService:
     def path_trend(self, record_id: str, partition: str | None = None, offset: int = 0) -> dict[str, Any]:
         if not SAFE_RECORD_ID.fullmatch(record_id):
             raise FundAttributionServiceError("预警路径标识格式不合法。")
-        dashboard = self.dashboard(partition=partition, offset=offset)
+        dashboard = self.published_dashboard(partition=partition, offset=offset)
         selected_partition = dashboard["meta"]["partition"]
         record = next(
             (
@@ -497,8 +521,8 @@ def partitions(force: bool = False, _user: dict = Depends(require_perm("fundMoni
     try:
         return JSONResponse(
             content={
-                "partitions": service.refresh_partitions() if force else service.available_partitions(),
-                "ranges": service.partition_ranges(),
+                "partitions": fund_assemble.published_partitions(FUND_SERVING_DIR),
+                "ranges": fund_assemble.read_partition_ranges(FUND_SERVING_DIR),
             }
         )
     except Exception as exc:  # noqa: BLE001
@@ -507,14 +531,19 @@ def partitions(force: bool = False, _user: dict = Depends(require_perm("fundMoni
 
 @router.get("/dashboard")
 def dashboard(
+    request: Request,
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
     offset: int = Query(default=0, ge=0, le=180),
     _user: dict = Depends(require_perm("fundMonitor")),
-) -> JSONResponse:
+) -> Response:
     try:
-        payload = service.with_rule_statuses(service.dashboard(partition=pt, force=force, offset=offset))
-        return JSONResponse(content=json_safe(payload))
+        from result_response_cache import cached_dashboard_response
+        return cached_dashboard_response(
+            request, domain="fund", serving_dir=FUND_SERVING_DIR,
+            status_path=service._status_store.path, partition=pt, offset=offset, force=force,
+            load_payload=lambda: json_safe(service.with_rule_statuses(service.published_dashboard(partition=pt, refresh=force, offset=offset))),
+        )
     except Exception as exc:  # noqa: BLE001
         raise handle_error(exc) from exc
 

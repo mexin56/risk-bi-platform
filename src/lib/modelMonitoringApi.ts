@@ -213,7 +213,7 @@ export function fetchModelMonitoringFilters(pt?: string, force = false): Promise
 }
 
 export function fetchModelMonitoring(pt?: string, force = false, filters: ModelMonitoringFilters = {}): Promise<ModelMonitoringPayload> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ compact: 'true' });
   if (pt) params.set('pt', pt);
   if (force) params.set('force', 'true');
   if (filters.model) params.set('model', filters.model);

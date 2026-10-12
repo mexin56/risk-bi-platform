@@ -1,0 +1,29 @@
+# Risk BI Dagster Webserver
+#
+# 只为两件事：
+#   1) 给出 http://127.0.0.1:3001/server_info 的 HTTP 探针，让
+#      /usr/local/bin/service-healthcheck.sh 能发现 daemon "进程活着但假死"；
+#   2) 团队可以在 Dagster UI 里查历史 run / 补跑失败的钉钉日报 job。
+#
+# 10/01~10/07 钉钉日报连续 6 天没发，就是因为 dagster-daemon 没有任何托管，
+# 巡检脚本里也没有它的探针，进程死了没人知道。
+[Unit]
+Description=Risk BI Dagster Webserver (UI + health endpoint)
+After=network-online.target risk-bi-dagster.service
+Wants=risk-bi-dagster.service
+
+[Service]
+Type=simple
+User=jupyter-wenning
+Group=jupyter-wenning
+WorkingDirectory=/home/jupyter-wenning/risk-bi-platform/server
+Environment=PYTHONUNBUFFERED=1
+Environment=DAGSTER_HOME=/home/jupyter-wenning/risk-bi-platform/server/data/dagster_home
+ExecStart=/home/jupyter-wenning/risk-bi-platform/.venv/bin/dagster-webserver -h 127.0.0.1 -p 3001
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

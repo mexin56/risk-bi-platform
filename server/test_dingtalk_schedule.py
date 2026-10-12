@@ -48,3 +48,5 @@ def test_env_example_documents_dingtalk_without_credentials():
     assert "DINGTALK_PROD_SECRET=" in text
     assert "ATTRIBUTION_PUBLIC_BASE_URL=" in text
     assert "DINGTALK_S3_FUND_PREFIX=" in text
+    assert "DINGTALK_S3_ENDPOINT_URL=" in text
+    assert "ATTRIBUTION_NOTIFY_THUMBNAIL_WIDTH=" in text

@@ -64,7 +64,9 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{2,32}$")
 ROLE_KEY_RE = re.compile(r"^[A-Za-z0-9_]{2,24}$")
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_init_lock = threading.Lock()
+_connections = threading.local()
+_schema_ready = False
 
 
 def _now() -> str:
@@ -89,14 +91,24 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
+    """Each FastAPI worker thread owns its SQLite connection and statement cache."""
+    global _schema_ready
+    conn = getattr(_connections, "conn", None)
+    if conn is None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _init_schema(_conn)
-        _seed(_conn)
-    return _conn
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        try:
+            with _init_lock:
+                if not _schema_ready:
+                    _init_schema(conn)
+                    _seed(conn)
+                    _schema_ready = True
+        except Exception:
+            conn.close()
+            raise
+        _connections.conn = conn
+    return conn
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:

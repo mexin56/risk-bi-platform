@@ -24,16 +24,18 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from auth import require_perm, router as auth_router
 from attribution_status import AttributionStatusStore
 from attribution_notification import (
     DEFAULT_REPORT_DIR,
+    FUND_REPORT_FILENAME_RE,
     fund_report_path_is_safe,
     report_path_is_safe,
+    resolve_report_image,
 )
 from fund_service import router as fund_router
 from model_monitoring import (
@@ -206,6 +208,7 @@ class AttributionService:
         self._model_monitor_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._model_monitor_label_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._model_score_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._published_versions: dict[str, str] = {}
         self._partition_cache: tuple[float, list[str]] | None = None
         self._partition_range_cache: tuple[float, dict[str, dict[str, str]]] | None = None
         self._lock = threading.Lock()
@@ -261,27 +264,16 @@ class AttributionService:
 
     def _local_serving_partitions(self) -> list[str]:
         """Return partitions already published locally by the migration/pipeline."""
-        serving_dir = Path(SERVING_DIR)
-        candidates: set[str] = set()
-        meta_path = serving_dir / "meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                for snapshot in meta.get("snapshots", []):
-                    partition = str(snapshot.get("pt") or "")
-                    if SAFE_PARTITION.fullmatch(partition):
-                        candidates.add(partition)
-            except Exception:
-                pass
-        if not candidates:
-            pattern = re.compile(r"^dashboard_(.+)_\d+\.parquet$")
-            for path in serving_dir.glob("dashboard_*.parquet"):
-                match = pattern.fullmatch(path.name)
-                if match and SAFE_PARTITION.fullmatch(match.group(1)):
-                    candidates.add(match.group(1))
-        return sorted(candidates, reverse=True)
+        if serving_assemble is None:
+            return []
+        return serving_assemble.published_partitions(SERVING_DIR)
 
-    def available_partitions(self) -> list[str]:
+    def available_partitions(self, *, prefer_serving: bool = True) -> list[str]:
+        if prefer_serving:
+            published = self._local_serving_partitions()
+            if published:
+                self._partition_cache = (time.time(), published)
+                return list(published)
         cached = self._partition_cache
         if cached and time.time() - cached[0] < CACHE_SECONDS:
             return list(cached[1])
@@ -309,26 +301,14 @@ class AttributionService:
     def refresh_partitions(self) -> list[str]:
         """清空分区缓存后重新发现(上游补数/调度延迟时, 前端刷新即可见到新分区)."""
         self._partition_cache = None
-        return self.available_partitions()
+        return self.available_partitions(prefer_serving=False)
 
     def _latest_published_partition(self, offset: int) -> str | None:
         """Return the newest local serving partition without querying MaxCompute."""
         if serving_assemble is not None:
-            pattern = re.compile(r"^dashboard_(.+)_(\d+)\.parquet$")
-            candidates: list[str] = []
-            serving_dir = Path(SERVING_DIR)
-            if serving_dir.exists():
-                for path in serving_dir.glob(f"dashboard_*_{offset}.parquet"):
-                    match = pattern.fullmatch(path.name)
-                    if match and int(match.group(2)) == offset:
-                        candidates.append(match.group(1))
-            for candidate in sorted(set(candidates), reverse=True):
-                try:
-                    snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, candidate, offset)
-                except Exception:
-                    snapshot = None
-                if snapshot is not None:
-                    return candidate
+            candidates = serving_assemble.published_partitions(SERVING_DIR, offset)
+            if candidates:
+                return candidates[0]
 
         # serving 快照不可用时，再检查已经落盘的在线缓存；同样不访问 MaxCompute。
         cache_dir = Path(DISK_CACHE_DIR)
@@ -350,14 +330,14 @@ class AttributionService:
         优先读预计算快照(夜间管线一条 GROUP BY 刷新);快照缺失时才回退到
         逐分区串行查询(冷启动可能耗时数十秒).
         """
-        cached = self._partition_range_cache
-        if cached and time.time() - cached[0] < CACHE_SECONDS:
-            return {key: dict(value) for key, value in cached[1].items()}
         if serving_assemble is not None:
             ranges = serving_assemble.read_partition_ranges(SERVING_DIR)
             if ranges:
                 self._partition_range_cache = (time.time(), ranges)
                 return {key: dict(value) for key, value in ranges.items()}
+        cached = self._partition_range_cache
+        if cached and time.time() - cached[0] < CACHE_SECONDS:
+            return {key: dict(value) for key, value in cached[1].items()}
         ranges: dict[str, dict[str, str]] = {}
         date_field = self.config["date_field"]
         for pt in self.available_partitions():
@@ -1021,6 +1001,8 @@ class AttributionService:
         """
         if serving_assemble is None or not isinstance(payload, dict):
             return
+        if (payload.get("meta") or {}).get("approval_enriched"):
+            return
         try:
             frame = serving_assemble.read_path_daily_frame(SERVING_DIR, selected, offset)
             serving_assemble.enrich_approval_rates(payload, frame)
@@ -1037,12 +1019,34 @@ class AttributionService:
 
     def _adopt_serving_snapshot(self, snapshot: dict[str, Any], selected: str, offset: int, cache_key: str) -> dict[str, Any]:
         """采纳管线刚发布的 serving 快照, 覆盖旧缓存并清除对应路径趋势缓存。"""
-        self._enrich_approval(snapshot, selected, offset)
         self._cache[cache_key] = (time.time(), snapshot)
-        self._save_disk_cache(cache_key, snapshot)
+        self._published_versions[cache_key] = str((snapshot.get("meta") or {}).get("result_version") or "")
         for key in [key for key in self._path_trend_cache if key.startswith(f"{selected}|{offset}|")]:
             self._path_trend_cache.pop(key, None)
         return snapshot
+
+    def published_dashboard(self, partition: str | None = None, offset: int = 0,
+                            refresh: bool = False) -> dict[str, Any]:
+        """展示专用入口：只读已发布 DuckDB，缺少结果时由调度任务补算。"""
+        offset = max(0, min(int(offset), 180))
+        if serving_assemble is None:
+            raise AttributionServiceError("业务结果读取模块不可用，请检查服务配置。")
+        if partition is not None and not SAFE_PARTITION.fullmatch(partition):
+            raise AttributionServiceError(f"分区 pt={partition} 格式不合法。")
+        candidates = serving_assemble.published_partitions(SERVING_DIR, offset)
+        selected = partition or (candidates[0] if candidates else None)
+        if selected is None or selected not in candidates:
+            raise AttributionServiceError(f"pt={partition or 'latest'}、offset={offset} 尚无已发布结果，请在 MyWorkflow 调度任务中执行计算。")
+        from pipeline.business_results import snapshot_version
+        version = snapshot_version(SERVING_DIR)
+        cache_key = f"{selected}|{offset}"
+        cached = self._cache.get(cache_key)
+        if cached and not refresh and self._published_versions.get(cache_key) == version and time.time() - cached[0] < CACHE_SECONDS:
+            return copy.deepcopy(cached[1])
+        snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
+        if snapshot is None:
+            raise AttributionServiceError(f"pt={selected}、offset={offset} 的业务结果读取失败，请检查 MyWorkflow 任务的发布状态。")
+        return copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
 
     def dashboard(self, partition: str | None = None, force: bool = False, offset: int = 0) -> dict[str, Any]:
         offset = max(0, min(int(offset), 180))
@@ -1072,18 +1076,10 @@ class AttributionService:
 
         cached = self._cache.get(cache_key)
         if cached and not force and time.time() - cached[0] < CACHE_SECONDS:
-            # 管线可能在 API 进程外发布了新快照: 不能让 15 分钟内存缓存遮住新数据
-            if serving_assemble is not None:
+            if serving_assemble is not None and self._published_versions.get(cache_key) != serving_assemble.snapshot_version(SERVING_DIR):
                 snapshot = serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
-                cached_serving = bool((cached[1].get("meta") or {}).get("serving"))
-                snapshot_serving = bool((snapshot or {}).get("meta", {}).get("serving"))
-                if snapshot is not None and (
-                    self._generated_at(snapshot) > self._generated_at(cached[1])
-                    or (snapshot_serving and not cached_serving)
-                ):
-                    result = copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
-                    result["meta"]["cache_hit"] = True
-                    return result
+                if snapshot is not None:
+                    return copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
             result = copy.deepcopy(cached[1])
             result["meta"]["cache_hit"] = True
             return result
@@ -1091,18 +1087,16 @@ class AttributionService:
         # 内存未命中: serving 快照与磁盘缓存都可能存在, 按 generated_at 取最新。
         # serving 是管线发布的权威产物, 先比对避免旧磁盘缓存遮住刚发布的数据。
         if not force:
-            disk = self._load_disk_cache(cache_key)
             snapshot = (
                 serving_assemble.read_dashboard_snapshot(SERVING_DIR, selected, offset)
                 if serving_assemble is not None
                 else None
             )
-            if snapshot is not None and (
-                disk is None or self._generated_at(snapshot) >= self._generated_at(disk)
-            ):
+            if snapshot is not None:
                 result = copy.deepcopy(self._adopt_serving_snapshot(snapshot, selected, offset, cache_key))
                 result["meta"]["cache_hit"] = True
                 return result
+            disk = self._load_disk_cache(cache_key)
             if disk:
                 self._enrich_approval(disk, selected, offset)
                 self._cache[cache_key] = (time.time(), disk)
@@ -1288,45 +1282,12 @@ class AttributionService:
         self, record: dict[str, Any], selected: str, offset: int
     ) -> dict[str, Any] | None:
         """Read the latest precomputed path trend for a pt from DuckDB."""
-        if not Path(DB_PATH).exists():
+        if serving_assemble is None:
             return None
-        try:
-            conn = duckdb.connect(str(DB_PATH), read_only=True)
-            try:
-                run = conn.execute(
-                    """
-                    SELECT run_id
-                    FROM attr_runs
-                    WHERE pt = ? AND offset_days = ?
-                    ORDER BY generated_at DESC
-                    LIMIT 1
-                    """,
-                    [selected, int(offset)],
-                ).fetchone()
-                if not run:
-                    return None
-                result = conn.execute(
-                    """
-                    SELECT alert_id, date, application_count,
-                           total_application_count, approval_count,
-                           cid_cnt, approval_cid_cnt
-                    FROM attr_path_daily
-                    WHERE run_id = ?
-                    ORDER BY date, alert_id
-                    """,
-                    [run[0]],
-                ).fetchall()
-                columns = [
-                    "alert_id", "date", "application_count",
-                    "total_application_count", "approval_count",
-                    "cid_cnt", "approval_cid_cnt",
-                ]
-                rows = [dict(zip(columns, row)) for row in result]
-            finally:
-                conn.close()
-            return self._format_precomputed_path_trend(record, rows)
-        except Exception:
+        rows = serving_assemble.read_path_daily_rows(SERVING_DIR, selected, offset, str(record["id"]))
+        if rows is None:
             return None
+        return self._format_precomputed_path_trend(record, rows)
 
     def _spawn_ingest(self, selected: str, offset: int, result: dict[str, Any]) -> None:
         """后台子进程调用管线 ingest,把在线兜底结果写入 DuckDB + 快照。
@@ -1378,9 +1339,7 @@ class AttributionService:
                 # 新分区已有 path_daily 快照时跳过(避免每次刷新都重复重算)
                 targets = [selected]
                 if latest > selected and latest not in targets:
-                    has_snapshot = (
-                        Path(SERVING_DIR) / f"path_daily_{latest}_0.parquet"
-                    ).exists()
+                    has_snapshot = serving_assemble.snapshot_exists(SERVING_DIR, latest, 0)
                     if not has_snapshot:
                         targets.append(latest)
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -1451,7 +1410,7 @@ class AttributionService:
         if not SAFE_RECORD_ID.fullmatch(record_id):
             raise AttributionServiceError("预警路径标识格式不合法。")
 
-        dashboard = self.dashboard(partition=partition, offset=offset)
+        dashboard = self.published_dashboard(partition=partition, offset=offset)
         selected_partition = dashboard["meta"]["partition"]
         record = next((item for item in dashboard["merged_alerts"] if item["id"] == record_id), None)
         if record is None:
@@ -1509,6 +1468,18 @@ def notification_report(filename: str) -> FileResponse:
     return FileResponse(path, media_type="image/png", filename=path.name)
 
 
+@app.get("/api/credit-attribution/notification-reports/{filename}/thumbnail")
+def notification_report_thumbnail(filename: str) -> FileResponse:
+    try:
+        resolved = resolve_report_image(NOTIFICATION_REPORT_DIR, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="报告不存在") from exc
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    path, media_type = resolved
+    return FileResponse(path, media_type=media_type, filename=path.name)
+
+
 @app.get("/api/fund-attribution/notification-reports/{filename}")
 def fund_notification_report(filename: str) -> FileResponse:
     try:
@@ -1518,6 +1489,22 @@ def fund_notification_report(filename: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="报告不存在")
     return FileResponse(path, media_type="image/png", filename=path.name)
+
+
+@app.get("/api/fund-attribution/notification-reports/{filename}/thumbnail")
+def fund_notification_report_thumbnail(filename: str) -> FileResponse:
+    try:
+        resolved = resolve_report_image(
+            NOTIFICATION_REPORT_DIR,
+            filename,
+            pattern=FUND_REPORT_FILENAME_RE,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="报告不存在") from exc
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    path, media_type = resolved
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 class RuleStatusUpdate(BaseModel):
@@ -1564,8 +1551,8 @@ def partitions(force: bool = False, _user: dict = Depends(require_perm("attribut
     try:
         return JSONResponse(
             content={
-                "partitions": service.refresh_partitions() if force else service.available_partitions(),
-                "ranges": service.partition_ranges(),
+                "partitions": serving_assemble.published_partitions(SERVING_DIR),
+                "ranges": serving_assemble.read_partition_ranges(SERVING_DIR),
             }
         )
     except Exception as exc:
@@ -1574,57 +1561,66 @@ def partitions(force: bool = False, _user: dict = Depends(require_perm("attribut
 
 @app.get("/api/credit-attribution/dashboard")
 def dashboard(
+    request: Request,
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
     offset: int = Query(default=0, ge=0, le=180),
     _user: dict = Depends(require_perm("attribution")),
-) -> JSONResponse:
+) -> Response:
     try:
-        payload = service.with_rule_statuses(service.dashboard(partition=pt, force=force, offset=offset))
-        return JSONResponse(content=json_safe(payload))
+        from result_response_cache import cached_dashboard_response
+        return cached_dashboard_response(
+            request, domain="credit", serving_dir=SERVING_DIR,
+            status_path=service._status_store.path, partition=pt, offset=offset, force=force,
+            load_payload=lambda: json_safe(service.with_rule_statuses(service.published_dashboard(partition=pt, refresh=force, offset=offset))),
+        )
     except Exception as exc:
         raise handle_error(exc) from exc
+
+
+def _model_result_response(request, key, force, loader):
+    from model_result_store import published_database
+    from pipeline.business_results import file_version
+    from result_response_cache import cached_published_response
+    version = file_version(published_database())
+    return cached_published_response(request, key=('model',version,*key), version=version, force=force, load_payload=loader)
 
 
 @app.get("/api/model-monitoring/filters")
 def model_monitoring_filters(
+    request: Request,
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
     _user: dict = Depends(require_perm("model")),
-) -> JSONResponse:
-    try:
-        return JSONResponse(content=json_safe(service.model_monitoring_filters(partition=pt, force=force)))
-    except Exception as exc:
-        raise handle_error(exc) from exc
+) -> Response:
+    from model_result_store import read_filters
+    return _model_result_response(request, ('filters',pt), force, lambda: read_filters(pt))
 
 
 @app.get("/api/model-monitoring")
 def model_monitoring(
+    request: Request,
     pt: str | None = Query(default=None, max_length=64),
     force: bool = Query(default=False),
+    compact: bool = Query(default=False),
     model: str | None = Query(default=None, max_length=128),
     flag_mob_type: str | None = Query(default=None, max_length=64),
     flag_product: str | None = Query(default=None, max_length=64),
     cash_ser_call_node: str | None = Query(default=None, max_length=64),
     _user: dict = Depends(require_perm("model")),
-) -> JSONResponse:
-    if model and model.strip() not in {field for field, _label in MODEL_SCORES}:
+) -> Response:
+    selected_model = (model or '').strip()
+    if selected_model and selected_model not in {field for field, _label in MODEL_SCORES}:
         raise HTTPException(status_code=422, detail="模型分参数不合法。")
-    try:
-        return JSONResponse(content=json_safe(service.model_monitoring(
-            partition=pt,
-            force=force,
-            model=model,
-            flag_mob_type=flag_mob_type,
-            flag_product=flag_product,
-            cash_ser_call_node=cash_ser_call_node,
-        )))
-    except Exception as exc:
-        raise handle_error(exc) from exc
+    from model_result_store import read_dashboard
+    scope = tuple((value or '').strip() for value in (flag_mob_type,flag_product,cash_ser_call_node))
+    return _model_result_response(request, ('dashboard',pt,scope,selected_model,compact), force,
+                                  lambda: read_dashboard(pt,scope,selected_model,compact))
 
 
 @app.get("/api/model-monitoring/score")
 def model_score_monitoring(
+    request: Request,
     model: str = Query(..., min_length=1, max_length=128),
     alias: str | None = Query(default=None, max_length=64),
     target: str = Query(default="fpd7", max_length=16),
@@ -1634,24 +1630,17 @@ def model_score_monitoring(
     flag_product: str | None = Query(default=None, max_length=64),
     cash_ser_call_node: str | None = Query(default=None, max_length=64),
     _user: dict = Depends(require_perm("model")),
-) -> JSONResponse:
-    if model.strip() not in {field for field, _label in MODEL_SCORES}:
+) -> Response:
+    selected_model = model.strip()
+    if selected_model not in {field for field, _label in MODEL_SCORES}:
         raise HTTPException(status_code=422, detail="模型分参数不合法。")
     if target not in TARGET_FIELDS:
         raise HTTPException(status_code=422, detail="目标变量参数不合法。")
-    try:
-        return JSONResponse(content=json_safe(service.model_score_monitoring(
-            model=model,
-            alias=alias,
-            target=target,
-            partition=pt,
-            force=force,
-            flag_mob_type=flag_mob_type,
-            flag_product=flag_product,
-            cash_ser_call_node=cash_ser_call_node,
-        )))
-    except Exception as exc:
-        raise handle_error(exc) from exc
+    from model_result_store import read_score
+    scope = tuple((value or '').strip() for value in (flag_mob_type,flag_product,cash_ser_call_node))
+    selected_alias = (alias or '').strip()
+    return _model_result_response(request, ('score',pt,scope,selected_model,selected_alias,target), force,
+                                  lambda: read_score(selected_model,selected_alias,target,pt,scope))
 
 
 @app.put("/api/credit-attribution/rule-status")

@@ -13,7 +13,7 @@ import re
 import sqlite3
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +25,17 @@ CREDIT_REPORT_PREFIX = "credit_attribution"
 FUND_REPORT_PREFIX = "fund_attribution"
 CREDIT_TITLE = "授信归因日报"
 FUND_TITLE = "资金归集日报"
+THUMBNAIL_SUBDIR = "thumb"
+THUMBNAIL_SUFFIX = ".jpg"
+DEFAULT_THUMBNAIL_WIDTH = 900
+DEFAULT_THUMBNAIL_QUALITY = 85
 REPORT_FILENAME_RE = re.compile(
     r"^credit_attribution_[A-Za-z0-9_-]+_\d{8}_\d{6}(?:_\d+)?\.png$"
 )
 FUND_REPORT_FILENAME_RE = re.compile(
     r"^fund_attribution_[A-Za-z0-9_-]+_\d{8}_\d{6}(?:_\d+)?\.png$"
 )
+THUMBNAIL_FILENAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.jpg$")
 
 
 def _status_label(status: int) -> str:
@@ -237,9 +242,16 @@ def _markdown_links(report_url: str | None, page_url: str | None) -> list[str]:
 
 
 def _daily_markdown(*, title: str, digest: dict[str, Any]) -> str:
-    """Render the shared daily layout: title, pt, risk points, then the link line."""
+    """Render the shared daily layout: title, pt, risk points, then the link line.
+
+    ``digest['notice']`` 为可选补发提示：上游缺分区或调度停摆时，日报仍要发出去，
+    但必须让收件人一眼看出这份数据不是当天的。
+    """
     risk_points = list(digest.get("risk_points") or [])
     lines = [f"# {title}", "", f"数据分区：`{digest['partition']}`", ""]
+    notice = str(digest.get("notice") or "").strip()
+    if notice:
+        lines.extend([f"> ⚠️ {notice}", ""])
     for index, point in enumerate(risk_points, start=1):
         point_lines = str(point).splitlines()
         if point_lines:
@@ -345,7 +357,9 @@ class DingTalkNotifier:
 
 
 class S3PngDingTalkNotifier:
-    """Upload a PNG report to S3 and send its public URL through DingTalk."""
+    """Upload a report image to S3 (or any S3-compatible store) and link it through DingTalk."""
+
+    IMAGE_CONTENT_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
     def __init__(
         self,
@@ -357,6 +371,8 @@ class S3PngDingTalkNotifier:
         webhook_secret: str,
         public_base_url: str | None = None,
         filename_prefix: str = CREDIT_REPORT_PREFIX,
+        endpoint_url: str | None = None,
+        addressing_style: str | None = None,
         s3_client: Any | None = None,
         session: Any | None = None,
         timeout: int = 30,
@@ -365,6 +381,8 @@ class S3PngDingTalkNotifier:
         self.region = region.strip()
         self.prefix = prefix.strip().strip("/")
         self.filename_prefix = filename_prefix.strip() or CREDIT_REPORT_PREFIX
+        self.endpoint_url = (endpoint_url or "").strip().rstrip("/")
+        self.addressing_style = (addressing_style or "").strip() or None
         self.webhook_url = webhook_url.strip()
         self.webhook_secret = webhook_secret.strip()
         self.public_base_url = (public_base_url or "").strip().rstrip("/")
@@ -387,35 +405,57 @@ class S3PngDingTalkNotifier:
         if self.s3_client is None:
             try:
                 import boto3
+                from botocore.config import Config
             except ImportError as exc:
                 raise RuntimeError("S3 推送需要安装 boto3") from exc
-            self.s3_client = boto3.client("s3", region_name=self.region)
+            config = Config(s3={"addressing_style": self.addressing_style}) if self.addressing_style else None
+            self.s3_client = boto3.client(
+                "s3",
+                region_name=self.region,
+                endpoint_url=self.endpoint_url or None,
+                config=config,
+            )
         return self.s3_client
 
     def upload(self, png_path: Path, pt: str) -> dict[str, str]:
+        """Upload a report screenshot (PNG) or its downscaled JPEG thumbnail."""
         normalized_pt = str(pt).strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized_pt):
             raise ValueError("非法 pt")
         source = Path(png_path)
-        if source.suffix.lower() != ".png" or not source.is_file():
-            raise ValueError("PNG 截图文件不存在或格式不正确")
-        filename = f"{self.filename_prefix}_{normalized_pt}.png"
+        suffix = source.suffix.lower()
+        content_type = self.IMAGE_CONTENT_TYPES.get(suffix)
+        if content_type is None or not source.is_file():
+            raise ValueError("报告截图文件不存在或格式不正确")
+        filename = f"{self.filename_prefix}_{normalized_pt}{suffix}"
         object_name = f"{self.prefix}/{filename}" if self.prefix else filename
         self._get_s3_client().upload_file(
                 str(source),
                 self.bucket,
                 object_name,
-                ExtraArgs={"ContentType": "image/png", "ACL": "public-read"},
+                ExtraArgs={"ContentType": content_type, "ACL": "public-read"},
             )
         image_url = self._public_url(object_name)
         return {"object_name": object_name, "image_url": image_url}
 
     def publish(self, png_path: Path, pt: str) -> dict[str, Any]:
-        """Upload a PNG and send it as a DingTalk image message."""
+        """Upload an image and send it as a DingTalk image message."""
         uploaded = self.upload(png_path, pt)
+        response = self._send_image_message(uploaded["image_url"])
+        return {**uploaded, "response": response}
+
+    def send_image(self, image_url: str) -> dict[str, Any]:
+        """Send an already uploaded public image as an inline DingTalk image message.
+
+        DingTalk fetches ``picURL`` server-side, so it must be a public HTTPS URL;
+        a private/intranet address renders as a broken image.
+        """
+        return self._send_image_message(image_url)
+
+    def _send_image_message(self, image_url: str) -> dict[str, Any]:
         response = self.session.post(
             self._signed_webhook_url(),
-            json={"msgtype": "image", "image": {"picURL": uploaded["image_url"]}},
+            json={"msgtype": "image", "image": {"picURL": image_url}},
             headers={"Content-Type": "application/json"},
             timeout=self.timeout,
         )
@@ -425,7 +465,7 @@ class S3PngDingTalkNotifier:
             raise RuntimeError(f"钉钉图片消息发送失败: {result}")
         if "success" in result and result["success"] is False:
             raise RuntimeError(f"钉钉图片消息发送失败: {result}")
-        return {**uploaded, "response": result}
+        return result
 
     def _public_url(self, object_name: str) -> str:
         if self.public_base_url:
@@ -465,7 +505,7 @@ def s3_notifier_from_env(
     filename_prefix: str = CREDIT_REPORT_PREFIX,
     object_prefix: str | None = None,
 ) -> S3PngDingTalkNotifier | None:
-    """Build the S3 PNG delivery adapter only when its configuration exists."""
+    """Build the S3/OSS PNG delivery adapter only when its configuration exists."""
     bucket = os.getenv("DINGTALK_S3_BUCKET", "").strip()
     if not bucket:
         return None
@@ -482,11 +522,35 @@ def s3_notifier_from_env(
         "webhook_secret": webhook_secret,
         "public_base_url": os.getenv("DINGTALK_S3_PUBLIC_BASE_URL", ""),
         "filename_prefix": filename_prefix,
+        "endpoint_url": os.getenv("DINGTALK_S3_ENDPOINT_URL", ""),
+        "addressing_style": os.getenv("DINGTALK_S3_ADDRESSING_STYLE", ""),
     }
     required = ("bucket", "webhook_url")
     if not all(str(settings[name]).strip() for name in required):
         return None
     return S3PngDingTalkNotifier(**settings)
+
+
+def publish_public_image_report(
+    s3_notifier: S3PngDingTalkNotifier,
+    *,
+    pt: str,
+    image_path: Path,
+    page_url: str | None,
+    title: str,
+    digest: dict[str, Any],
+    formatter: Any,
+) -> dict[str, Any]:
+    """Upload a public image, send it inline, then send the linked summary.
+
+    DingTalk fetches ``msgtype=image`` picURL server-side, so the URL must be
+    publicly reachable; raising here lets the caller fall back to the intranet link.
+    """
+    uploaded = s3_notifier.upload(image_path, pt)
+    image_response = s3_notifier.send_image(uploaded["image_url"])
+    summary_markdown = formatter(digest, image_url=uploaded["image_url"], page_url=page_url)
+    summary_response = s3_notifier.send_markdown(summary_markdown, title=title)
+    return {**uploaded, "image_response": image_response, "summary_response": summary_response}
 
 
 def report_path_is_safe(
@@ -507,6 +571,96 @@ def report_path_is_safe(
 def fund_report_path_is_safe(report_dir: Path, filename: str) -> Path:
     """Validate a fund-pooling report filename before it is served over HTTP."""
     return report_path_is_safe(report_dir, filename, pattern=FUND_REPORT_FILENAME_RE)
+
+
+def thumbnail_filename(filename: str) -> str:
+    """Map a validated report PNG name to its downscaled JPEG sibling."""
+    return f"{Path(str(filename)).stem}{THUMBNAIL_SUFFIX}"
+
+
+def thumbnail_path_is_safe(
+    report_dir: Path,
+    filename: str,
+    *,
+    pattern: re.Pattern[str] = REPORT_FILENAME_RE,
+) -> Path:
+    """Resolve a report thumbnail path, keeping traversal and prefix checks in place."""
+    report_path_is_safe(report_dir, filename, pattern=pattern)
+    root = (Path(report_dir).resolve() / THUMBNAIL_SUBDIR)
+    return report_path_is_safe(root, thumbnail_filename(filename), pattern=THUMBNAIL_FILENAME_RE)
+
+
+def fund_thumbnail_path_is_safe(report_dir: Path, filename: str) -> Path:
+    return thumbnail_path_is_safe(report_dir, filename, pattern=FUND_REPORT_FILENAME_RE)
+
+
+def thumbnail_settings() -> tuple[int, int]:
+    """Read the configured thumbnail width/quality; width<=0 disables thumbnails."""
+    try:
+        width = int(os.getenv("ATTRIBUTION_NOTIFY_THUMBNAIL_WIDTH", "") or DEFAULT_THUMBNAIL_WIDTH)
+    except ValueError:
+        width = DEFAULT_THUMBNAIL_WIDTH
+    try:
+        quality = int(os.getenv("ATTRIBUTION_NOTIFY_THUMBNAIL_QUALITY", "") or DEFAULT_THUMBNAIL_QUALITY)
+    except ValueError:
+        quality = DEFAULT_THUMBNAIL_QUALITY
+    return width, min(95, max(30, quality))
+
+
+def write_thumbnail(
+    png_path: Path,
+    *,
+    width: int | None = None,
+    quality: int | None = None,
+) -> Path | None:
+    """Downscale a long screenshot to a JPEG thumbnail served next to the full PNG.
+
+    Returns ``None`` when thumbnails are disabled or the screenshot is already small
+    enough, so the caller can keep linking the original image.
+    """
+    from PIL import Image
+
+    source = Path(png_path)
+    configured_width, configured_quality = thumbnail_settings()
+    target_width = configured_width if width is None else int(width)
+    target_quality = configured_quality if quality is None else int(quality)
+    if target_width <= 0 or not source.is_file():
+        return None
+    with Image.open(source) as image:
+        if image.width <= target_width:
+            return None
+        resized = image.resize(
+            (target_width, max(1, round(image.height * target_width / image.width))),
+            Image.LANCZOS,
+        )
+        if resized.mode not in ("RGB", "L"):
+            resized = resized.convert("RGB")
+        report_dir = source.parent.parent if source.parent.name == THUMBNAIL_SUBDIR else source.parent
+        pattern = (
+            FUND_REPORT_FILENAME_RE
+            if source.name.startswith(f"{FUND_REPORT_PREFIX}_")
+            else REPORT_FILENAME_RE
+        )
+        target = thumbnail_path_is_safe(report_dir, source.name, pattern=pattern)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        resized.save(target, format="JPEG", quality=target_quality, optimize=True, progressive=True)
+    return target
+
+
+def resolve_report_image(
+    report_dir: Path,
+    filename: str,
+    *,
+    pattern: re.Pattern[str] = REPORT_FILENAME_RE,
+) -> tuple[Path, str] | None:
+    """Prefer the JPEG thumbnail and fall back to the full PNG when it is missing."""
+    thumbnail = thumbnail_path_is_safe(report_dir, filename, pattern=pattern)
+    if thumbnail.is_file():
+        return thumbnail, "image/jpeg"
+    full = report_path_is_safe(report_dir, filename, pattern=pattern)
+    if full.is_file():
+        return full, "image/png"
+    return None
 
 
 def save_report_png(
@@ -547,6 +701,54 @@ def save_fund_report_png(
     )
 
 
+def _ensure_logged_in(
+    page: Any,
+    username: str,
+    password: str,
+    *,
+    web_url: str,
+    content_selector: str,
+    timeout_ms: int,
+    attempts: int = 3,
+) -> bool:
+    """Log in through the SPA form, reloading once the session token is stored.
+
+    Three app-side races make a single submit unreliable:
+      1. 登录表单可能还没挂载(React 首屏渲染慢)，此时 count()==0 不能当成"已登录"，
+         必须等它出现——之前直接 return False，截图就会卡在 ready_selector 上超时
+         (10/10 资金归结日报截图失败回退文字就是这么来的)；
+      2. 登录表单可能在 DOM 里但 React 还没绑上 submit handler；
+      3. 第一次 dashboard 请求带着登录前的 token 发出并 401，页面不会自己恢复。
+    所以失败就重新加载整页，让所有请求都带上已保存的会话重跑一遍。
+    """
+    login_form_timeout = min(timeout_ms, 30_000)
+    for attempt in range(attempts):
+        username_input = page.locator(login_username_selector())
+        try:
+            username_input.first.wait_for(state="visible", timeout=login_form_timeout)
+        except Exception:
+            # 表单始终没出现：可能已经登录了(内容区在)，否则下一轮重新加载再试
+            if page.locator(content_selector).count() > 0:
+                return True
+            if attempt + 1 >= attempts:
+                break
+            page.goto(web_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            continue
+        if not username or not password:
+            raise ValueError("截图页面需要登录，但未配置 ATTRIBUTION_NOTIFY_USERNAME/PASSWORD")
+        username_input.first.fill(username)
+        page.locator(login_password_selector()).first.fill(password)
+        page.locator(login_submit_selector()).first.click()
+        try:
+            page.wait_for_selector(content_selector, state="attached", timeout=min(timeout_ms, 30_000))
+            return True
+        except Exception:
+            if attempt + 1 >= attempts:
+                break
+            page.goto(web_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    raise RuntimeError("登录提交后未进入监控页面，请检查通知账号配置")
+
+
 def _capture_dashboard_page(
     web_url: str,
     username: str,
@@ -566,14 +768,14 @@ def _capture_dashboard_page(
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
             page.add_init_script(theme_init_script(os.getenv("ATTRIBUTION_NOTIFY_THEME", "teal").strip() or "teal"))
             page.goto(web_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            username_input = page.locator(login_username_selector())
-            if username_input.count() > 0:
-                if not username or not password:
-                    raise ValueError("截图页面需要登录，但未配置 ATTRIBUTION_NOTIFY_USERNAME/PASSWORD")
-                username_input.fill(username)
-                page.locator(login_password_selector()).fill(password)
-                page.locator(login_submit_selector()).click()
-            page.wait_for_selector(content_selector, state="attached", timeout=timeout_ms)
+            _ensure_logged_in(
+                page,
+                username,
+                password,
+                web_url=web_url,
+                content_selector=content_selector,
+                timeout_ms=timeout_ms,
+            )
             page.locator(ready_selector).wait_for(state="attached", timeout=timeout_ms)
             page.wait_for_function(
                 trend_ready_expression(),
@@ -723,8 +925,18 @@ def content_crop_box(box: dict[str, float]) -> tuple[int, int, int, int]:
 
 
 class NotificationLedger:
-    def __init__(self, path: Path) -> None:
+    """发送台账：pt 主键去重 + 记录"这条消息是为哪一天发的"。
+
+    expected_pt 让巡检能区分两种情况：
+      - 当天日报真的没发出来(expected_pt 没被覆盖) → 告警；
+      - 上游缺分区后已经发过补发消息(expected_pt 被覆盖，但内容是旧分区)
+        → 不重复告警，正文里的 ⚠️ 补发提示已经说清楚了。
+    """
+
+    def __init__(self, path: Path, *, initialize: bool = True) -> None:
         self.path = Path(path)
+        if not initialize:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(str(self.path)) as connection:
             connection.execute(
@@ -738,6 +950,9 @@ class NotificationLedger:
                 )
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(attribution_dingtalk_notification)")}
+            if "expected_pt" not in columns:  # 老台账平滑升级，不动已有数据
+                connection.execute("ALTER TABLE attribution_dingtalk_notification ADD COLUMN expected_pt TEXT")
 
     def claim(self, pt: str) -> bool:
         claimed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -746,14 +961,42 @@ class NotificationLedger:
                 "INSERT OR IGNORE INTO attribution_dingtalk_notification (pt, status, claimed_at) VALUES (?, 'pending', ?)",
                 [str(pt), claimed_at],
             )
+            if cursor.rowcount == 1:
+                return True
+            # A terminated sender cannot release its claim. Reclaim after the
+            # one-hour node timeout; the conditional update serializes callers.
+            cursor = connection.execute(
+                "UPDATE attribution_dingtalk_notification SET claimed_at=?, sent_at=NULL, "
+                "report_name=NULL, expected_pt=NULL WHERE pt=? AND status='pending' "
+                "AND julianday(claimed_at) < julianday(?)",
+                [claimed_at, str(pt), self._claim_cutoff()],
+            )
             return cursor.rowcount == 1
 
-    def mark_sent(self, pt: str, report_name: str) -> None:
+    @staticmethod
+    def _claim_cutoff() -> str:
+        seconds = int(os.getenv('NOTIFICATION_CLAIM_TTL_SECONDS', '3600'))
+        if seconds < 3600:
+            raise ValueError('NOTIFICATION_CLAIM_TTL_SECONDS 必须不少于节点默认超时 3600 秒')
+        return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+    def expired_pending_pts(self) -> set[str]:
+        if not self.path.exists():
+            return set()
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            return {str(row[0]) for row in connection.execute(
+                "SELECT pt FROM attribution_dingtalk_notification WHERE status='pending' "
+                "AND julianday(claimed_at) < julianday(?)", [self._claim_cutoff()],
+            )}
+
+    def mark_sent(self, pt: str, report_name: str, expected_pt: str | None = None) -> None:
         sent_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with sqlite3.connect(str(self.path)) as connection:
             connection.execute(
-                "UPDATE attribution_dingtalk_notification SET status = 'sent', sent_at = ?, report_name = ? WHERE pt = ?",
-                [sent_at, str(report_name), str(pt)],
+                "UPDATE attribution_dingtalk_notification SET status = 'sent', sent_at = ?, report_name = ?"
+                + (", expected_pt = ?" if expected_pt else "")
+                + " WHERE pt = ?",
+                [sent_at, str(report_name)] + ([str(expected_pt)] if expected_pt else []) + [str(pt)],
             )
 
     def release(self, pt: str) -> None:
@@ -762,3 +1005,55 @@ class NotificationLedger:
                 "DELETE FROM attribution_dingtalk_notification WHERE pt = ? AND status = 'pending'",
                 [str(pt)],
             )
+
+    def recorded_pts(self) -> set[str]:
+        """已登记的分区（含 pending 与 sent），用于挑出还没发过的日报。"""
+        if not self.path.exists():
+            return set()
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            return {str(row[0]) for row in connection.execute("SELECT pt FROM attribution_dingtalk_notification")}
+
+    def is_sent(self, pt: str) -> bool:
+        """A pending claim is not a successful delivery."""
+        if not self.path.exists():
+            return False
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            return connection.execute(
+                "SELECT 1 FROM attribution_dingtalk_notification WHERE pt=? AND status='sent'",
+                [str(pt)],
+            ).fetchone() is not None
+
+    def latest_sent_pt(self) -> str | None:
+        """最近一次成功发送的分区；从未发送过返回 None。"""
+        if not self.path.exists():
+            return None
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            row = connection.execute(
+                "SELECT MAX(pt) FROM attribution_dingtalk_notification WHERE status = 'sent'"
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
+
+    def pending_pts(self) -> list[str]:
+        """发送中断留下的 pending 分区（进程被杀时 claim 没有 release）。"""
+        if not self.path.exists():
+            return []
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            return sorted(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT pt FROM attribution_dingtalk_notification WHERE status <> 'sent'"
+                )
+            )
+
+    def covered_expected_pts(self) -> set[str]:
+        """已经被某条消息显式声明覆盖的"应发分区"（含补发）。"""
+        if not self.path.exists():
+            return set()
+        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+            return {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT expected_pt FROM attribution_dingtalk_notification"
+                    " WHERE status = 'sent' AND expected_pt IS NOT NULL"
+                )
+            }
