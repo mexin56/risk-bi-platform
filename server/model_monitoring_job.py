@@ -40,6 +40,13 @@ class BatchModelService(AttributionService):
         self.group_lock = threading.Lock()
         self.label_rows = []
         self.active_instances = set()
+        self.extra_query_rows: dict[str, list] = {}
+
+    def _run_extra_query(self, sink, name, sql):
+        """Run a heavy extra SQL through the same pool and keep its raw rows."""
+        rows = self._remote_rows(sql, name)
+        sink[name] = rows
+        return rows
 
     def _remote_rows(self, sql, label):
         started=time.monotonic()
@@ -134,6 +141,7 @@ def qcut_sql(table, partition):
         masks=', '.join(str(mask) for mask in range(8) if mask & (1<<index))
         scope_expressions.append(f"CASE WHEN scope_mask IN ({masks}) THEN COALESCE(CAST({name} AS STRING), '未知') ELSE '' END AS {SCOPE_COLUMNS[index]}")
     scope_names=', '.join(SCOPE_COLUMNS)
+    scope_expanded=', '.join(scope_expressions)
     sums=', '.join(f'SUM(CASE WHEN {target}_fm_dd = 1 THEN 1 ELSE 0 END) AS {target}_base, SUM(CASE WHEN {target}_fz_dd = 1 THEN 1 ELSE 0 END) AS {target}_bad' for target in TARGET_FIELDS)
     raw_targets=', '.join(f'{target}_fm_dd, {target}_fz_dd' for target in TARGET_FIELDS)
     return f"""
@@ -168,6 +176,49 @@ GROUP BY {scope_names}, day, alias, model, qcut_bin
 """
 
 
+def overview_distinct_sql(table, partition, subset):
+    """只对 subset 指定的维度做 COUNT(DISTINCT)，其余维度输出空串。
+
+    CUBE 会把 DISTINCT 放大到 116 个切片（全分区 329s~1455s），而按维度子集
+    分组时单条只需 10~50s；8 个子集并行提交后总墙钟 = 最慢的一条。
+    """
+    dims=', '.join(f"COALESCE(CAST({name} AS STRING), '未知') AS __dim_{index}" for index,name in enumerate(DIMENSIONS))
+    selected=[index for index in range(len(DIMENSIONS)) if subset >> index & 1]
+    labels=[]
+    for index,key in enumerate(SCOPE_COLUMNS):
+        if index in selected:
+            labels.append(f"__dim_{index} AS {key}")
+        else:
+            labels.append(f"CAST('' AS STRING) AS {key}")
+    group=', '.join(f"__dim_{index}" for index in selected)
+    # subset=0 即全量切片：不带 GROUP BY，直接返回一行。
+    group_clause=f'\nGROUP BY {group}' if selected else ''
+    return f"""
+SELECT {', '.join(labels)},
+       COUNT(DISTINCT businessid) AS business_cnt,
+       COUNT(DISTINCT cid) AS cid_cnt
+FROM (SELECT *, {dims} FROM {table} WHERE pt = '{partition}') model_source{group_clause}
+"""
+
+
+def smoke_test_sqls(queries):
+    """用不存在的分区重发每条 SQL，只验语法/语义，秒级返回。
+
+    上游 SQL 一旦写错，线程池会等最慢那条（50 分钟）才报错；这里先把错误挡在提交前。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    service=BatchModelService()
+    def check(item):
+        name,sql=item
+        probe=re.sub(r"pt\s*=\s*'\d{8}'","pt = '19000101'",sql)
+        probe=re.sub(r"pt\s*=\s*\d{8}","pt = 19000101",probe)
+        instance=service._odps().run_sql(probe)
+        instance.wait_for_success()
+        return name
+    with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+        return list(executor.map(check,queries.items()))
+
+
 def compute_partition(partition):
     global ACTIVE_SERVICE
     if not re.fullmatch(r'\d{8}',partition):raise ValueError('pt must be YYYYMMDD')
@@ -177,7 +228,27 @@ def compute_partition(partition):
     if partition not in partitions:
         print(f'[model] upstream partition not ready: requested={partition}, latest={partitions[0] if partitions else "none"}',flush=True)
         raise ValueError('Requested upstream partition is not ready')
-    service.model_monitoring(partition=partition,force=True)
+    # qcut10 与其余聚合同批并行提交：它本身就是最长的一杆，串行等会把总时长翻倍。
+    qcut_sql_text=qcut_sql(service.model_monitoring_table_name,partition)
+    distinct_queries={f'overview_distinct_{mask}':overview_distinct_sql(service.model_monitoring_table_name,partition,mask) for mask in range(8)}
+    if os.environ.get('RISK_BI_SQL_SMOKE')=='1':
+        checked=smoke_test_sqls({'qcut10':qcut_sql_text,**distinct_queries})
+        print(f'[model] sql smoke test passed: {len(checked)} queries',flush=True)
+    service.model_monitoring(partition=partition,force=True,overview_distinct=False,
+        extra_queries={'qcut10':qcut_sql_text,**distinct_queries})
+    # 回填精确去重数：CUBE 查询里已置零，按维度子集的结果按标签三元组写回。
+    filled=0
+    for name,rows in service.extra_query_rows.items():
+        if not name.startswith('overview_distinct_'):continue
+        for row in rows:
+            scope=tuple(str(row.pop(key) or '') for key in SCOPE_COLUMNS)
+            buckets=service.grouped.get(scope,{}).get('overview')
+            if not buckets:continue
+            for bucket in buckets:
+                if row.get('business_cnt') is not None:bucket['business_cnt']=row['business_cnt']
+                if row.get('cid_cnt') is not None:bucket['cid_cnt']=row['cid_cnt']
+            filled+=1
+    print(f'[model] overview distinct backfilled: scopes={filled}',flush=True)
     filters={'partition':partition,
              'flag_mob_type_options':sorted({str(row.get('flag_mob_type') or '未知') for row in service.label_rows}),
              'flag_product_options':sorted({str(row.get('flag_product') or '未知') for row in service.label_rows}),
@@ -185,7 +256,7 @@ def compute_partition(partition):
     print('[model] qcut10 all-model/all-slice aggregation started',flush=True)
     started=time.monotonic()
     qcuts=defaultdict(list)
-    for row in service._remote_rows(qcut_sql(service.model_monitoring_table_name,partition),'qcut10'):
+    for row in service.extra_query_rows.get('qcut10', []):
         qcuts[scope_of(row)].append(row)
     print(f'[model] qcut10 aggregation completed, scopes={len(qcuts)}, elapsed={time.monotonic()-started:.1f}s',flush=True)
     # ROW_NUMBER above keeps one non-null cid per day/model/alias/scope. COUNT(*)

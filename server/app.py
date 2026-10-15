@@ -532,8 +532,16 @@ class AttributionService:
         flag_mob_type: str | None = None,
         flag_product: str | None = None,
         cash_ser_call_node: str | None = None,
+        extra_queries: dict[str, str] | None = None,
+        overview_distinct: bool = True,
     ) -> dict[str, Any]:
-        """读取现金模型监控宽表，返回业务环节、分数分层与趋势聚合。"""
+        """读取现金模型监控宽表，返回业务环节、分数分层与趋势聚合。
+
+        extra_queries 让离线批处理把重 SQL（如 qcut10、overview 去重拆分）并入同一
+        个线程池，避免多轮串行等待；在线 API 路径不传，保持原行为。
+        overview_distinct=False 时把 overview 的两个 COUNT(DISTINCT) 置零，由调用方
+        用更便宜的分组去重查询回填（CUBE 会把 DISTINCT 放大到每个切片一次）。
+        """
         selected = partition
         if selected is None:
             partitions = self.model_monitoring_partitions()
@@ -578,11 +586,14 @@ class AttributionService:
                     f"SUM(CASE WHEN {field} = '-1' THEN 1 ELSE 0 END) AS {field}_sentinel",
                 ]
             )
+        count_expr = "COUNT" if overview_distinct else "COUNT"
+        # 拆分去重时用 0 占位：不能写 CAST(COUNT(DISTINCT x) ...) 之类，MaxCompute 会解析失败。
+        distinct_expr = (lambda column: f"COUNT(DISTINCT {column})" if overview_distinct else "0")
         overview_sql = f"""
             SELECT
                 COUNT(*) AS row_count,
-                COUNT(DISTINCT businessid) AS business_cnt,
-                COUNT(DISTINCT cid) AS cid_cnt,
+                {distinct_expr('businessid')} AS business_cnt,
+                {distinct_expr('cid')} AS cid_cnt,
                 MIN(create_time) AS min_create_time,
                 MAX(create_time) AS max_create_time,
                 MIN(event_date) AS min_event_date,
@@ -778,15 +789,24 @@ class AttributionService:
         }
         if model_effect_sql:
             queries["model_effect"] = model_effect_sql
-        with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+        sink: dict[str, list] = {}
+        with ThreadPoolExecutor(max_workers=len(queries) + len(extra_queries or {})) as executor:
             query_futures = {
                 name: executor.submit(self._run_sql_rows, sql)
                 for name, sql in queries.items()
+            }
+            # 重 SQL 直读远端，不走 _run_sql_rows 的 CUBE 包装（它们自带维度列）
+            extra_futures = {
+                name: executor.submit(self._run_extra_query, sink, name, sql)
+                for name, sql in (extra_queries or {}).items()
             }
             query_rows = {
                 name: future.result()
                 for name, future in query_futures.items()
             }
+            for name, future in extra_futures.items():
+                future.result()
+        self.extra_query_rows = sink
 
         overview_rows = query_rows["overview"]
         if not overview_rows:
