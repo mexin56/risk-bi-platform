@@ -132,18 +132,38 @@ class BatchModelService(AttributionService):
         return by_scope.get(('', '', ''), [])
 
 
-def qcut_sql(table, partition):
-    """Deduplicate within each slice, then fix qcut10 per slice/model/alias."""
+def qcut_sql(table, partition, mask=None):
+    """Deduplicate within each slice, then fix qcut10 per slice/model/alias.
+
+    mask=None：单条查询，一次 EXPLODE 出 8 个 scope 标签（原始形态）。
+    mask=0..7：只算该 scope，不再展开 scope 标签，行数不膨胀，可 8 条并行；
+    query 内 scope 固定，NTILE/去重 的 partition 等价于原来的 (…, scope)。
+    """
     lookback=(datetime.strptime(partition,'%Y%m%d').date()-timedelta(days=30)).isoformat()
     scores=', '.join(f"'{field}', CAST({field} AS STRING)" for field,_ in MODEL_SCORES)
     scope_expressions=[]
     for index,name in enumerate(DIMENSIONS):
-        masks=', '.join(str(mask) for mask in range(8) if mask & (1<<index))
+        masks=', '.join(str(value) for value in range(8) if value & (1<<index))
         scope_expressions.append(f"CASE WHEN scope_mask IN ({masks}) THEN COALESCE(CAST({name} AS STRING), '未知') ELSE '' END AS {SCOPE_COLUMNS[index]}")
-    scope_names=', '.join(SCOPE_COLUMNS)
-    scope_expanded=', '.join(scope_expressions)
     sums=', '.join(f'SUM(CASE WHEN {target}_fm_dd = 1 THEN 1 ELSE 0 END) AS {target}_base, SUM(CASE WHEN {target}_fz_dd = 1 THEN 1 ELSE 0 END) AS {target}_bad' for target in TARGET_FIELDS)
     raw_targets=', '.join(f'{target}_fm_dd, {target}_fz_dd' for target in TARGET_FIELDS)
+    if mask is None:
+        scope_names=', '.join(SCOPE_COLUMNS)
+        scope_select=', '.join(scope_expressions)+', '
+        scope_explode='            LATERAL VIEW EXPLODE(ARRAY(0,1,2,3,4,5,6,7)) scopes_expanded AS scope_mask\n'
+        scope_partition=f"{scope_names}, "
+        dedup_partition=f", {scope_names}"
+    else:
+        # 标签在最内层算好，外层一律用别名（MaxCompute 的 GROUP BY 不接受别名表达式）
+        labels=[]
+        for index,key in enumerate(SCOPE_COLUMNS):
+            column=f"COALESCE(CAST({DIMENSIONS[index]} AS STRING), '未知')"
+            labels.append(f"{column} AS {key}" if mask & (1<<index) else f"CAST('' AS STRING) AS {key}")
+        scope_names=', '.join(SCOPE_COLUMNS)
+        scope_select=', '.join(labels)+', '
+        scope_explode=''
+        scope_partition=''
+        dedup_partition=''
     return f"""
 SELECT {scope_names}, day, alias, model, qcut_bin AS bin,
        COUNT(*) AS customer_count, COUNT(*) AS samples,
@@ -154,19 +174,18 @@ SELECT {scope_names}, day, alias, model, qcut_bin AS bin,
        {sums}
 FROM (
     SELECT customer_candidates.*,
-           NTILE(10) OVER (PARTITION BY {scope_names}, alias, model ORDER BY score_value, CAST(cid AS STRING), CAST(businessid AS STRING)) AS qcut_bin
+           NTILE(10) OVER (PARTITION BY {scope_partition}alias, model ORDER BY score_value, CAST(cid AS STRING), CAST(businessid AS STRING)) AS qcut_bin
     FROM (
         SELECT sliced.*,
-               ROW_NUMBER() OVER (PARTITION BY day, alias, cid, model, {scope_names} ORDER BY create_time DESC, CAST(businessid AS STRING) DESC) AS customer_row_number
+               ROW_NUMBER() OVER (PARTITION BY day, alias, cid, model{dedup_partition} ORDER BY create_time DESC, CAST(businessid AS STRING) DESC) AS customer_row_number
         FROM (
-            SELECT {', '.join(scope_expressions)}, event_date AS day,
+            SELECT {scope_select}event_date AS day,
                    COALESCE(CAST(alias AS STRING), '未知') AS alias, cid, businessid, create_time,
                    model, CAST(score_value AS DOUBLE) AS score_value,
                    approval_result, if_loan_success, {raw_targets}
             FROM {table}
             LATERAL VIEW EXPLODE(MAP({scores})) model_expanded AS model, score_value
-            LATERAL VIEW EXPLODE(ARRAY(0,1,2,3,4,5,6,7)) scopes_expanded AS scope_mask
-            WHERE pt = '{partition}' AND event_date IS NOT NULL AND event_date >= '{lookback}'
+{scope_explode}            WHERE pt = '{partition}' AND event_date IS NOT NULL AND event_date >= '{lookback}'
               AND cid IS NOT NULL AND score_value IS NOT NULL AND score_value <> '' AND CAST(score_value AS DOUBLE) >= 0
         ) sliced
     ) customer_candidates
@@ -229,13 +248,19 @@ def compute_partition(partition):
         print(f'[model] upstream partition not ready: requested={partition}, latest={partitions[0] if partitions else "none"}',flush=True)
         raise ValueError('Requested upstream partition is not ready')
     # qcut10 与其余聚合同批并行提交：它本身就是最长的一杆，串行等会把总时长翻倍。
-    qcut_sql_text=qcut_sql(service.model_monitoring_table_name,partition)
-    distinct_queries={f'overview_distinct_{mask}':overview_distinct_sql(service.model_monitoring_table_name,partition,mask) for mask in range(8)}
+    table=service.model_monitoring_table_name
+    split_qcut=os.environ.get('RISK_BI_QCUT_SPLIT')=='1'
+    if split_qcut:
+        qcut_queries={f'qcut10_mask_{mask}':qcut_sql(table,partition,mask) for mask in range(8)}
+    else:
+        qcut_queries={'qcut10':qcut_sql(table,partition)}
+    distinct_queries={f'overview_distinct_{mask}':overview_distinct_sql(table,partition,mask) for mask in range(8)}
+    if split_qcut:print('[model] qcut10 split into 8 scope queries',flush=True)
+    extra={**qcut_queries,**distinct_queries}
     if os.environ.get('RISK_BI_SQL_SMOKE')=='1':
-        checked=smoke_test_sqls({'qcut10':qcut_sql_text,**distinct_queries})
+        checked=smoke_test_sqls(extra)
         print(f'[model] sql smoke test passed: {len(checked)} queries',flush=True)
-    service.model_monitoring(partition=partition,force=True,overview_distinct=False,
-        extra_queries={'qcut10':qcut_sql_text,**distinct_queries})
+    service.model_monitoring(partition=partition,force=True,overview_distinct=False,extra_queries=extra)
     # 回填精确去重数：CUBE 查询里已置零，按维度子集的结果按标签三元组写回。
     filled=0
     for name,rows in service.extra_query_rows.items():
@@ -256,8 +281,10 @@ def compute_partition(partition):
     print('[model] qcut10 all-model/all-slice aggregation started',flush=True)
     started=time.monotonic()
     qcuts=defaultdict(list)
-    for row in service.extra_query_rows.get('qcut10', []):
-        qcuts[scope_of(row)].append(row)
+    for name,rows in service.extra_query_rows.items():
+        if name!='qcut10' and not name.startswith('qcut10_mask_'):continue
+        for row in rows:
+            qcuts[scope_of(row)].append(row)
     print(f'[model] qcut10 aggregation completed, scopes={len(qcuts)}, elapsed={time.monotonic()-started:.1f}s',flush=True)
     # ROW_NUMBER above keeps one non-null cid per day/model/alias/scope. COUNT(*)
     # therefore equals COUNT(DISTINCT cid) in each final bin without another hash set.
