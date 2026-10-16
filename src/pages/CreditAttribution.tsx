@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import ChartCard from '@/components/ChartCard';
+import PartitionDatePicker from '@/components/PartitionDatePicker';
 import FeishuTable, { StatusTag, type FeishuColumn } from '@/components/FeishuTable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { baseOption } from '@/lib/chartTheme';
@@ -1071,23 +1072,17 @@ export default function CreditAttribution() {
           )}
         </div>
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/60 px-2.5 py-1.5 text-[10.5px] text-slate-500 backdrop-blur-xl">
-          <span className="text-slate-400">数据分区</span>
-          <span className="theme-select-wrap">
-          <select
+          <span className="text-slate-400">数据日期</span>
+          <PartitionDatePicker
+            partitions={partitions}
             value={selectedPartition}
-            onChange={(event) => {
-              const pt = event.target.value;
+            ariaLabel="选择数据日期"
+            onChange={(pt) => {
               setSelectedPartition(pt);
-              setDaysBack(0); // 切换分区后观察区间回到最近15天, 档位按新分区范围动态生成
+              setDaysBack(0); // 切换日期后观察区间回到最近15天, 档位按新分区范围动态生成
               void load(false, pt, 0); // 立即按新分区加载
             }}
-            className="theme-select"
-            aria-label="选择数据分区"
-            title="切换分区后自动按新分区重新加载"
-          >
-            {partitions.map((pt) => <option key={pt} value={pt}>pt={pt}</option>)}
-          </select>
-          </span>
+          />
         </div>
         <button
           onClick={() => {
