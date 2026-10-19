@@ -71,6 +71,8 @@ export default function PartitionDatePicker({ partitions, value, onChange, ariaL
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-2">
         <Calendar
+          className="[--cell-size:3.3rem] p-4 text-[1.2rem] [&_th]:text-[1.05rem] [&_th]:font-medium [&_svg]:size-[1.2rem]"
+          classNames={{ caption_label: 'select-none font-medium text-[1.2rem]' }}
           mode="single"
           selected={selected}
           defaultMonth={selected ?? endMonth}
